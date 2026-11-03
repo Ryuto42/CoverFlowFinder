@@ -171,36 +171,11 @@ struct PanePathBar: View {
     let onActivate: () -> Void
 
     @State private var isEditingPath = false
-    @State private var editPathText = ""
-    @FocusState private var isPathFieldFocused: Bool
 
     var body: some View {
         HStack(spacing: style.itemSpacing) {
             if isEditingPath {
-                TextField("Path", text: $editPathText)
-                    .textFieldStyle(.plain)
-                    .font(Font(style.font))
-                    .focused($isPathFieldFocused)
-                    .onSubmit { navigateToEditedPath() }
-                    .onExitCommand { cancelPathEditing() }
-                    .onAppear {
-                        editPathText = viewModel.currentPath.path
-                        isPathFieldFocused = true
-                    }
-
-                Button(action: { navigateToEditedPath() }) {
-                    Image(systemName: "arrow.right.circle.fill")
-                        .font(Font(style.font))
-                        .foregroundColor(.accentColor)
-                }
-                .buttonStyle(.plain)
-
-                Button(action: { cancelPathEditing() }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(Font(style.font))
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
+                InlinePathEditor(viewModel: viewModel, fontSize: style.font.pointSize, onFinish: { isEditingPath = false })
             } else {
                 GeometryReader { geometry in
                     breadcrumbs(availableWidth: geometry.size.width)
@@ -212,6 +187,7 @@ struct PanePathBar: View {
         .padding(.horizontal, style.horizontalPadding)
         .frame(height: style.height)
         .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
+        .pathBarExtras(viewModel: viewModel, startEditing: startPathEditing)
     }
 
     private func breadcrumbs(availableWidth: CGFloat) -> some View {
@@ -241,12 +217,12 @@ struct PanePathBar: View {
                 }
             }
 
-            // The empty part: double-click to type a path
+            // The empty part: click to type a path
             Rectangle()
                 .fill(Color.primary.opacity(0.001))
                 .contentShape(Rectangle())
                 .frame(minWidth: 0, maxWidth: .infinity)
-                .onTapGesture(count: 2) {
+                .onTapGesture {
                     startPathEditing()
                 }
         }
@@ -309,22 +285,7 @@ struct PanePathBar: View {
     }
 
     private func startPathEditing() {
-        editPathText = viewModel.currentPath.path
         isEditingPath = true
-    }
-
-    private func cancelPathEditing() {
-        isEditingPath = false
-        isPathFieldFocused = false
-    }
-
-    private func navigateToEditedPath() {
-        if PathEntryResolver.navigate(viewModel, to: editPathText) {
-            cancelPathEditing()
-            onActivate()
-        } else {
-            NSSound.beep()
-        }
     }
 }
 
@@ -497,8 +458,8 @@ struct PaneView: View {
                     ForEach(DualPaneView.PaneViewMode.allCases, id: \.self) { mode in
                         Image(systemName: mode.systemImage)
                             .tag(mode)
-                            .help(mode.rawValue)
-                            .accessibilityLabel(mode.rawValue)
+                            .help(mode.localizedName)
+                            .accessibilityLabel(mode.localizedName)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -585,11 +546,13 @@ struct PaneListView: View {
                             Spacer()
 
                             Text(item.formattedSize)
+                                .monospacedDigit()
                                 .font(appSettings.compactListDetailFont)
                                 .foregroundColor(.secondary)
                                 .frame(width: 60, alignment: .trailing)
 
                             Text(item.formattedDate)
+                                .monospacedDigit()
                                 .font(appSettings.compactListDetailFont)
                                 .foregroundColor(.secondary)
                                 .frame(width: 100, alignment: .trailing)

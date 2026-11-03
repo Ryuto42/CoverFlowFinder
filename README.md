@@ -1,5 +1,15 @@
 # Flow Finder
 
+> **このリポジトリは非公式のフォークです。** 本家は [elliotttate/CoverFlowFinder](https://github.com/elliotttate/CoverFlowFinder)（MIT License）です。
+> 追加した機能は [CUSTOM_FEATURES.md](CUSTOM_FEATURES.md) を参照してください。下のダウンロードリンクや更新配信は本家のもので、このフォークの改造は含まれません。
+>
+> *This is an unofficial fork of [elliotttate/CoverFlowFinder](https://github.com/elliotttate/CoverFlowFinder). The download links below point to the upstream builds, which don't include the changes in this fork.*
+>
+> **ビルド方法**
+> 1. `Config/Local.xcconfig` のバンドル ID（`PRODUCT_BUNDLE_IDENTIFIER`）と `DEVELOPMENT_TEAM` を自分のものに書き換える。バンドル ID を変えたときは、`FlowFinderFinderSync/FinderSync.swift` の `appBundleID` と `scripts/install-local.sh` の ID も合わせる。
+> 2. `scripts/install-local.sh` で Release ビルドを作り、`/Applications` に入れる。
+> 3. 本家の更新は `scripts/update-from-upstream.command` で取り込む（本家を `upstream` リモートとして自動で登録する）。
+
 A beautiful macOS file browser that brings back the classic Cover Flow view from older versions of Finder.
 
 ![Flow Finder Screenshot](screenshots/coverflow-apps.png)

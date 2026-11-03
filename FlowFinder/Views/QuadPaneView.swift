@@ -192,8 +192,8 @@ struct QuadPaneCell: View {
                     ForEach(QuadPaneView.PaneViewMode.allCases, id: \.self) { mode in
                         Image(systemName: mode.systemImage)
                             .tag(mode)
-                            .help(mode.rawValue)
-                            .accessibilityLabel(mode.rawValue)
+                            .help(mode.localizedName)
+                            .accessibilityLabel(mode.localizedName)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -313,6 +313,7 @@ struct QuadPaneListRow: View {
             Spacer()
 
             Text(item.formattedSize)
+                .monospacedDigit()
                 .font(appSettings.compactListDetailFont)
                 .foregroundColor(.secondary)
                 .frame(width: 50, alignment: .trailing)

@@ -1,0 +1,7 @@
+// 自分用ビルドの上書き設定。pbxproj を本家のまま保ち、更新取り込み時の競合を避けるため、
+// xcodebuild に -xcconfig で渡す（コマンドライン指定と同じく最優先で効く）。
+PRODUCT_BUNDLE_IDENTIFIER = com.ryuto.FlowFinder$(FF_BUNDLE_SUFFIX)
+DEVELOPMENT_TEAM = KM2GL2JSFW
+CODE_SIGN_STYLE = Manual
+CODE_SIGN_IDENTITY = Apple Development
+PROVISIONING_PROFILE_SPECIFIER =

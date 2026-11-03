@@ -272,7 +272,7 @@ struct SettingsView: View {
 }
 
 struct SettingsSliderRow: View {
-    let title: String
+    let title: LocalizedStringKey
     @Binding var value: Double
     let range: ClosedRange<Double>
     let step: Double

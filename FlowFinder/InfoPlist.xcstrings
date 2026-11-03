@@ -1,0 +1,46 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "CFBundleDisplayName" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Flow Finder"
+          }
+        }
+      }
+    },
+    "NSAppleEventsUsageDescription" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "標準のアプリケーションを直接変更できないときに、Finder の「情報を見る」ウインドウを開くために使います。"
+          }
+        }
+      }
+    },
+    "NSLocalNetworkUsageDescription" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Flow Finder は、共有サーバを検出するためにローカルネットワークを使用します。"
+          }
+        }
+      }
+    },
+    "NSPhotoLibraryUsageDescription" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Flow Finder は、写真を表示するために写真ライブラリへのアクセスを必要とします。"
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

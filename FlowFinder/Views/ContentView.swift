@@ -212,6 +212,16 @@ struct ContentView: View {
         tabStore.selectedTab.viewModel
     }
 
+    /// The pane of the current tab the window acts on: its focused pane when it is split.
+    private var focusedViewModel: FileBrowserViewModel {
+        tabStore.selectedTab.focusedViewModel
+    }
+
+    private var splitFocusKey: String {
+        let tab = tabStore.selectedTab
+        return "\(tab.id)-\(tab.split.map { ObjectIdentifier($0).hashValue } ?? 0)-\(tab.focusedSide)"
+    }
+
     private var rightPaneViewModel: FileBrowserViewModel {
         auxiliaryPaneStore.rightPaneViewModel
     }
@@ -244,7 +254,7 @@ struct ContentView: View {
             case .bottomRight: return bottomRightPaneViewModel
             }
         default:
-            return viewModel
+            return focusedViewModel
         }
     }
 
@@ -255,12 +265,12 @@ struct ContentView: View {
         case .quadPane:
             return [viewModel, rightPaneViewModel, bottomLeftPaneViewModel, bottomRightPaneViewModel]
         default:
-            return [viewModel]
+            return tabStore.selectedTab.allViewModels
         }
     }
 
     private var managedViewModels: [FileBrowserViewModel] {
-        deduplicatedViewModels(tabs.map(\.viewModel) + auxiliaryPaneStore.loadedViewModels)
+        deduplicatedViewModels(tabs.flatMap(\.allViewModels) + auxiliaryPaneStore.loadedViewModels)
     }
 
     var body: some View {
@@ -285,16 +295,33 @@ struct ContentView: View {
                 onVolumeDidUnmount: leaveUnmountedVolume,
                 onVolumeUnmountFailed: returnToVolume
             ))
+            .modifier(SplitTabNotifications(
+                isTargetWindow: isTargetWindow,
+                onReopenClosedTab: reopenClosedTab,
+                onSelectTab: { tabStore.selectTab(atShortcutIndex: $0) },
+                onToggleSplit: toggleSplit,
+                onTransfer: transferToOtherPane
+            ))
+            .modifier(FolderOpenNotifications(onNewTab: openFolderInNewTab, onSplit: openFolderInSplit))
+            .onChange(of: splitFocusKey) { _, _ in
+                if currentViewMode != .quadPane && currentViewMode != .dualPane {
+                    currentViewMode = focusedViewModel.viewMode
+                }
+                syncWindowTitle()
+                syncCommandContext()
+                updateViewModelActivity()
+            }
             .onReceive(activeViewModel.locationTitlePublisher) { title in
                 windowTitle = title
             }
-            .onReceive(viewModel.$viewMode) { mode in
+            .onReceive(focusedViewModel.$viewMode) { mode in
                 // Keep the layout in sync when something else changes the mode (e.g. the sidebar's
                 // Photos Library switches to Masonry).
                 if mode != currentViewMode {
                     currentViewMode = mode
                 }
             }
+            .translucentWindowBackground()
             .background(activitySyncView)
             .background(HostingWindowReader { window in
                 attachHostWindow(window)
@@ -313,25 +340,16 @@ struct ContentView: View {
         }
 
         ToolbarItem(placement: .principal) {
-            Picker("View", selection: viewModeBinding) {
-                ForEach(ViewMode.allCases, id: \.self) { mode in
-                    Image(systemName: mode.systemImage)
-                        .tag(mode)
-                        .help(mode.rawValue)
-                        .accessibilityLabel(mode.rawValue)
-                }
-            }
-            .pickerStyle(.segmented)
-            // Always the control's natural width: a fixed frame narrower than the segments need was
-            // honoured on some toolbar layouts and not others, so the icons were sometimes crammed
-            // against the capsule's edges.
-            .fixedSize()
-            .help("Change view mode")
+            ToolbarViewModePicker(selection: viewModeBinding)
         }
 
         ToolbarItemGroup(placement: .primaryAction) {
             ToolbarSortMenu(viewModel: activeViewModel)
+            NewItemToolbarMenu(viewModel: activeViewModel)
             ToolbarActionsMenu(viewModel: activeViewModel)
+        }
+
+        SearchToolbarItem {
             ToolbarSearchControls(viewModel: activeViewModel)
         }
     }
@@ -346,13 +364,13 @@ struct ContentView: View {
             tabIDs: tabs.map(\.id),
             showHiddenFiles: settings.showHiddenFiles,
             onAppearAction: {
-                currentViewMode = viewModel.viewMode
+                currentViewMode = focusedViewModel.viewMode
                 syncWindowTitle()
                 syncCommandContext()
                 updateViewModelActivity()
             },
             onSelectedTabChange: {
-                currentViewMode = viewModel.viewMode
+                currentViewMode = focusedViewModel.viewMode
                 syncWindowTitle()
                 syncCommandContext()
                 updateViewModelActivity()
@@ -373,24 +391,18 @@ struct ContentView: View {
     private var splitView: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             SidebarView(viewModel: activeViewModel, isDualPane: currentViewMode == .dualPane || currentViewMode == .quadPane)
-                .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 300)
+                .dropStackPanel()
+                .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 400)
         } detail: {
             detailContent
+                .translucentDetailBackground()
         }
     }
 
     @ViewBuilder
     private var detailContent: some View {
         VStack(spacing: 0) {
-            if tabs.count > 1 {
-                TabBarView(
-                    tabs: $tabStore.tabs,
-                    selectedTabId: $tabStore.selectedTabId,
-                    onNewTab: addNewTab,
-                    onCloseTab: closeTab
-                )
-                Divider()
-            }
+            ChromeTabBar(store: tabStore, actions: tabBarActions)
 
             // Keyed by tab only: navigating a pane must not rebuild the split view (that reset the
             // other panes' scroll positions and path editing).
@@ -416,9 +428,19 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .frame(minWidth: 800, minHeight: 600)
                 .id("quadpane-\(selectedTabId)")
+            } else if let split = tabStore.selectedTab.split {
+                SplitTabContent(tabId: selectedTabId, leftViewModel: viewModel, split: split)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .id("split-\(selectedTabId)")
             } else {
                 TabContentWrapper(viewModel: viewModel, selectedTabId: selectedTabId)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .modifier(SwipeNavigationPane(viewModel: viewModel))
+                    .modifier(TabSplitDropTarget(
+                        isEnabled: tabs.count > 1,
+                        canAccept: { tabStore.canMerge($0) },
+                        onDrop: mergeTab
+                    ))
             }
         }
     }
@@ -429,6 +451,7 @@ struct ContentView: View {
         hostWindow.window = window
         if let window {
             KeyboardManager.shared.registerBrowserWindow(window)
+            TabSession.attach(tabStore, to: window)
             let context = commandContext
             DispatchQueue.main.async {
                 MenuValidationState.shared.setCommandContext(context, for: window)
@@ -440,6 +463,7 @@ struct ContentView: View {
     private func syncCommandContext() {
         commandContext.bind(to: activeViewModel)
         commandContext.setTabCount(tabs.count)
+        commandContext.setSplitTab(tabStore.selectedTab.split != nil && currentViewMode != .quadPane && currentViewMode != .dualPane)
     }
 
     private func isTargetWindow(_ object: Any?) -> Bool {
@@ -447,9 +471,12 @@ struct ContentView: View {
         return target === window
     }
 
-    /// ⇧⌘G: the Go to Folder sheet for the active pane, whatever has focus (the path bars' inline
-    /// editing is only for a double-click).
+    /// ⇧⌘G: edits the active pane's path bar in place; the sheet only when the path bar is hidden.
     private func presentGoToFolder() {
+        if AppSettings.shared.showPathBar {
+            NotificationCenter.default.post(name: .pathBarBeginEditing, object: activeViewModel)
+            return
+        }
         guard let window = hostWindow.window else { return }
         GoToFolderPrompt.present(for: activeViewModel, in: window)
     }
@@ -462,23 +489,32 @@ struct ContentView: View {
         // Deferred: switching modes replaces the content view, which must not happen inside the
         // picker's own update.
         DispatchQueue.main.async {
-            viewModel.viewMode = mode
+            // Quad Pane is a layout of the whole tab: not for a split one.
+            if tabStore.selectedTab.split != nil && (mode == .quadPane || mode == .dualPane) {
+                NSSound.beep()
+                currentViewMode = focusedViewModel.viewMode
+                return
+            }
+            focusedViewModel.viewMode = mode
             currentViewMode = mode
+            FolderViewOptionsStore.shared.viewModeChanged(in: focusedViewModel)
         }
     }
 
     /// A view-mode request for one of this window's view models (e.g. the sidebar's Photos Library
     /// asks for Masonry). Applies to the current tab in single-pane layouts; Dual/Quad keep their layout.
     private func handleViewModeRequest(for requester: FileBrowserViewModel, mode: ViewMode) {
-        guard requester === viewModel,
+        guard tabStore.selectedTab.allViewModels.contains(where: { $0 === requester }),
               currentViewMode != .dualPane,
               currentViewMode != .quadPane,
               mode != .dualPane,
               mode != .quadPane else { return }
-        if viewModel.viewMode != mode {
-            viewModel.viewMode = mode
+        if requester.viewMode != mode {
+            requester.viewMode = mode
         }
-        currentViewMode = mode
+        if requester === focusedViewModel {
+            currentViewMode = mode
+        }
     }
 
     private func showInfoIfOwned(_ item: FileItem) {
@@ -521,7 +557,7 @@ struct ContentView: View {
     /// Like Finder, a new tab opens the folder in front: the active pane's in dual/quad mode, in
     /// the layout (view mode) this tab uses.
     private func addNewTab() {
-        let newTab = BrowserTab(initialPath: Self.newTabFolder(for: activeViewModel))
+        let newTab = BrowserTab(initialPath: NewTabLocation.folder() ?? Self.newTabFolder(for: activeViewModel))
         newTab.viewModel.viewMode = currentViewMode
         newTab.viewModel.setUndoManager(undoManager)
         tabStore.addTab(newTab)
@@ -535,7 +571,109 @@ struct ContentView: View {
 
     private func closeTab(_ tabId: UUID) {
         guard let closed = tabStore.closeTab(tabId) else { return }
-        shutDown(closed.viewModel)
+        closed.allViewModels.forEach(shutDown)
+    }
+
+    private var tabBarActions: ChromeTabBarActions {
+        ChromeTabBarActions(
+            newTab: addNewTab,
+            closeTab: closeTab,
+            duplicateTab: duplicateTab,
+            closeOtherTabs: { tabStore.closeTabs(otherThan: $0).flatMap(\.allViewModels).forEach(shutDown) },
+            closeTabsToRight: { tabStore.closeTabs(rightOf: $0).flatMap(\.allViewModels).forEach(shutDown) },
+            unsplit: { tabStore.unsplit($0) },
+            swapSides: { tabStore.swapSides($0) },
+            closeSplitSide: { tabId, side in tabStore.closeSplitSide(tabId, side: side).map(shutDown) }
+        )
+    }
+
+    private func makeTab(at url: URL, viewMode: ViewMode) -> BrowserTab {
+        let tab = BrowserTab(initialPath: url)
+        tab.viewModel.viewMode = viewMode
+        tab.viewModel.setUndoManager(undoManager)
+        return tab
+    }
+
+    /// A new tab right of `tabId` with the folder of its focused pane.
+    private func duplicateTab(_ tabId: UUID) {
+        guard let index = tabStore.index(of: tabId) else { return }
+        let source = tabs[index].focusedViewModel
+        tabStore.insertTab(makeTab(at: Self.newTabFolder(for: source), viewMode: source.viewMode), at: index + 1)
+    }
+
+    /// ⇧⌘T
+    private func reopenClosedTab() {
+        guard let url = tabStore.popClosedTabURL() else {
+            NSSound.beep()
+            return
+        }
+        tabStore.addTab(makeTab(at: url, viewMode: focusedViewModel.viewMode))
+    }
+
+    /// ⇧⌘D: splits the current tab with the same folder on the right, or unsplits it.
+    private func toggleSplit() {
+        let tab = tabStore.selectedTab
+        if tab.split != nil {
+            tabStore.unsplit(tab.id)
+            return
+        }
+        guard currentViewMode != .quadPane && currentViewMode != .dualPane else {
+            NSSound.beep()
+            return
+        }
+        let right = FileBrowserViewModel(initialPath: Self.newTabFolder(for: viewModel))
+        right.viewMode = viewModel.viewMode
+        right.setUndoManager(undoManager)
+        tabStore.split(tab.id, rightViewModel: right)
+    }
+
+    private func ownsPane(_ source: FileBrowserViewModel) -> Bool {
+        managedViewModels.contains { $0 === source }
+    }
+
+    private func openFolderInNewTab(from source: FileBrowserViewModel, _ url: URL) {
+        guard ownsPane(source) else { return }
+        let mode = source.viewMode
+        tabStore.addTab(makeTab(at: url, viewMode: mode == .dualPane || mode == .quadPane ? currentViewMode : mode))
+    }
+
+    /// Splits the tab and opens the folder on the right, or opens it in the pane opposite the one it came from.
+    private func openFolderInSplit(from source: FileBrowserViewModel, _ url: URL) {
+        guard ownsPane(source) else { return }
+        guard currentViewMode != .quadPane && currentViewMode != .dualPane else {
+            NSSound.beep()
+            return
+        }
+        let tab = tabStore.selectedTab
+        if let split = tab.split {
+            let target = split.rightViewModel === source ? tab.viewModel : split.rightViewModel
+            target.navigateTo(url)
+            split.focusedSide = split.rightViewModel === target ? .right : .left
+            return
+        }
+        let right = FileBrowserViewModel(initialPath: url)
+        right.viewMode = source.viewMode
+        right.setUndoManager(undoManager)
+        tabStore.split(tab.id, rightViewModel: right)
+    }
+
+    private func mergeTab(_ draggedTabId: UUID, onto side: SplitSide) {
+        guard currentViewMode != .quadPane && currentViewMode != .dualPane else { return }
+        tabStore.merge(draggedTabId, onto: side)
+    }
+
+    /// F5 / F6 in a split tab.
+    private func transferToOtherPane(_ operation: FileDropOperation) {
+        let tab = tabStore.selectedTab
+        guard tab.split != nil, currentViewMode != .quadPane, currentViewMode != .dualPane else {
+            NSSound.beep()
+            return
+        }
+        SplitPaneTransfer.transfer(
+            from: tab.viewModel(for: tab.focusedSide),
+            to: tab.viewModel(for: tab.focusedSide.opposite),
+            operation: operation
+        )
     }
 
     /// ⌘W: close the current tab, or the window when it is the last tab.
@@ -563,8 +701,8 @@ struct ContentView: View {
 
     private func assignUndoManager() {
         let manager = undoManager
-        for tab in tabs {
-            tab.viewModel.setUndoManager(manager)
+        for viewModel in tabs.flatMap(\.allViewModels) {
+            viewModel.setUndoManager(manager)
         }
         for viewModel in auxiliaryPaneStore.loadedViewModels {
             viewModel.setUndoManager(manager)
@@ -621,15 +759,18 @@ private struct ToolbarHistoryButton: View {
 /// Sorts the active pane (each pane has its own sort).
 private struct ToolbarSortMenu: View {
     @ObservedObject var viewModel: FileBrowserViewModel
+    @EnvironmentObject private var settings: AppSettings
 
     var body: some View {
         Menu {
+            Toggle("Keep folders on top", isOn: $settings.foldersFirst)
+            Divider()
             ForEach(ListColumn.allCases) { column in
                 Button(action: {
                     viewModel.setSortColumn(column)
                 }) {
                     HStack {
-                        Text(column.rawValue)
+                        Text(column.localizedName)
                         if viewModel.sortState.column == column {
                             Image(systemName: viewModel.sortState.direction == .ascending ? "chevron.up" : "chevron.down")
                         }
@@ -674,6 +815,7 @@ private struct ToolbarActionsMenu: View {
 
 private struct ToolbarSearchControls: View {
     @ObservedObject var viewModel: FileBrowserViewModel
+    @State private var isSearchFocused = false
 
     var body: some View {
         HStack(spacing: 2) {
@@ -682,20 +824,24 @@ private struct ToolbarSearchControls: View {
                     Button {
                         viewModel.searchMode = mode
                     } label: {
-                        Label(mode.rawValue, systemImage: mode.systemImage)
+                        Label(mode.localizedName, systemImage: mode.systemImage)
                     }
                 }
+                SmartFolderSaveMenuItem(viewModel: viewModel)
             } label: {
-                Label(viewModel.searchMode.rawValue, systemImage: viewModel.searchMode.systemImage)
-                    .labelStyle(.titleAndIcon)
+                Label(viewModel.searchMode.localizedName, systemImage: viewModel.searchMode.systemImage)
+                    .labelStyle(.iconOnly)
             }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
             .id("search-mode-\(viewModel.searchMode.rawValue)")
             .fixedSize()
-            .help("Search mode: \(viewModel.searchMode.rawValue)")
+            .help("Search mode: \(viewModel.searchMode.localizedName)")
 
-            SearchField(text: $viewModel.searchText, placeholder: viewModel.searchMode.placeholder, focusTarget: viewModel)
+            SearchField(text: $viewModel.searchText, placeholder: viewModel.searchMode.placeholder, focusTarget: viewModel, isFocused: $isSearchFocused)
                 .frame(width: 180)
                 .id("main-search-field")
+
 
             if viewModel.isSearching {
                 ProgressView()
@@ -703,6 +849,7 @@ private struct ToolbarSearchControls: View {
                     .frame(width: 16, height: 16)
             }
         }
+        .modifier(SearchControlFrame(isFocused: isSearchFocused))
     }
 }
 
@@ -735,10 +882,7 @@ struct ArchiveCompressionMenu: View {
 
     var body: some View {
         let targets = items ?? viewModel.selectedItemsForCompression
-        ForEach(ArchiveCompressionFormat.allCases, id: \.self) { format in
-            Button(format.title) { viewModel.compressItems(items, format: format) }
-                .disabled(targets.isEmpty)
-        }
+        CustomMenuItems(entries: [CustomCompression.menuEntry(viewModel: viewModel) { targets }])
     }
 }
 
@@ -897,6 +1041,8 @@ struct FileItemContextMenu: View {
                 targetSelection()
                 viewModel.showInFinder()
             }
+
+            CustomItemMenu(item: item, viewModel: viewModel)
         }
     }
 
@@ -1047,14 +1193,14 @@ enum GoToFolderPrompt {
         guard window.attachedSheet == nil else { return }
 
         let alert = NSAlert()
-        alert.messageText = "Go to Folder"
-        alert.informativeText = "Enter a path. Use ~ for your home folder."
-        alert.addButton(withTitle: "Go")
-        alert.addButton(withTitle: "Cancel")
+        alert.messageText = String(localized: "Go to Folder")
+        alert.informativeText = String(localized: "Enter a path. Use ~ for your home folder.")
+        alert.addButton(withTitle: String(localized: "Go"))
+        alert.addButton(withTitle: String(localized: "Cancel"))
 
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 340, height: 24))
         field.stringValue = viewModel.isInsideArchive ? "" : viewModel.currentPath.path
-        field.placeholderString = "~/Documents"
+        field.placeholderString = String(localized: "~/Documents")
         alert.accessoryView = field
         alert.window.initialFirstResponder = field
 
@@ -1073,40 +1219,11 @@ enum GoToFolderPrompt {
 struct PathBarView: View {
     @ObservedObject var viewModel: FileBrowserViewModel
     @State private var isEditing = false
-    @State private var editText = ""
-    @FocusState private var isTextFieldFocused: Bool
-
+    @State private var dropTargetURL: URL?
     var body: some View {
         HStack(spacing: 4) {
             if isEditing {
-                // Editable text field
-                TextField("Path", text: $editText)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12))
-                    .focused($isTextFieldFocused)
-                    .onSubmit {
-                        navigateToPath(editText)
-                    }
-                    .onExitCommand {
-                        cancelEditing()
-                    }
-                    .onAppear {
-                        editText = viewModel.currentPath.path
-                        isTextFieldFocused = true
-                        selectAllPathText()
-                    }
-
-                Button(action: { navigateToPath(editText) }) {
-                    Image(systemName: "arrow.right.circle.fill")
-                        .foregroundColor(.accentColor)
-                }
-                .buttonStyle(.plain)
-
-                Button(action: { cancelEditing() }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
+                InlinePathEditor(viewModel: viewModel, fontSize: 12, onFinish: { isEditing = false })
             } else {
                 // Breadcrumb path display - use archive-aware path components
                 ForEach(Array(viewModel.pathComponents.enumerated()), id: \.offset) { index, component in
@@ -1135,23 +1252,47 @@ struct PathBarView: View {
                     .foregroundColor(index == viewModel.pathComponents.count - 1 ? .primary : .secondary)
                     .padding(.horizontal, 4)
                     .padding(.vertical, 2)
+                    .background(
+                        RoundedRectangle(cornerRadius: 5)
+                            .fill(Color.accentColor.opacity(component.url != nil && component.url == dropTargetURL ? 0.25 : 0))
+                    )
                     .contentShape(Rectangle())
                     .onTapGesture {
+                        if NSEvent.modifierFlags.contains(.command), openComponentInNewTab(at: index) { return }
                         navigateToComponent(at: index)
                     }
+                    .onMiddleClick { _ = openComponentInNewTab(at: index) }
+                    .modifier(PathComponentDropTarget(
+                        url: component.archivePath == nil ? component.url : nil,
+                        viewModel: viewModel,
+                        targetedURL: $dropTargetURL,
+                        open: { navigateToComponent(at: index) }
+                    ))
                 }
 
                 Rectangle()
                     .fill(Color.primary.opacity(0.001))
                     .contentShape(Rectangle())
-                    .onTapGesture(count: 2) {
+                    .onTapGesture {
                         startEditing()
                     }
+
+                GitPathBarAccessory(viewModel: viewModel)
+                PathBarCopyButton(viewModel: viewModel)
+                DiskImagePathBarAccessory(viewModel: viewModel)
             }
         }
         .padding(.horizontal, 16)
         .frame(height: 36)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+        .pathBarExtras(viewModel: viewModel, startEditing: startEditing)
+        .uiBackground(.chrome)
+    }
+
+    private func openComponentInNewTab(at index: Int) -> Bool {
+        let component = viewModel.pathComponents[index]
+        guard component.archivePath == nil, let url = component.url else { return false }
+        FolderOpenRequest.post(.openFolderInNewTab, folder: url, from: viewModel)
+        return true
     }
 
     private func navigateToComponent(at index: Int) {
@@ -1168,35 +1309,7 @@ struct PathBarView: View {
     }
 
     private func startEditing() {
-        editText = viewModel.currentPath.path
         isEditing = true
-    }
-
-    /// Selects the whole path once the field editor is up, so it can be copied right away.
-    /// Targets the field editor directly so a not-yet-focused field never sends Select All to the file list.
-    private func selectAllPathText(attempt: Int = 0) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + (attempt == 0 ? 0 : 0.03)) {
-            guard isEditing else { return }
-            if let editor = NSApp.keyWindow?.firstResponder as? NSTextView, editor.isFieldEditor,
-               editor.string == editText {
-                editor.selectAll(nil)
-            } else if attempt < 10 {
-                selectAllPathText(attempt: attempt + 1)
-            }
-        }
-    }
-
-    private func cancelEditing() {
-        isEditing = false
-        isTextFieldFocused = false
-    }
-
-    private func navigateToPath(_ path: String) {
-        if PathEntryResolver.navigate(viewModel, to: path) {
-            cancelEditing()
-        } else {
-            NSSound.beep()
-        }
     }
 }
 
@@ -1332,7 +1445,8 @@ struct StatusBarView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 4)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .uiBackground(.chrome)
+        .overlay(alignment: .top) { Divider() }
         .onAppear {
             model.bind(to: viewModel)
         }
@@ -1388,26 +1502,26 @@ struct EmptyFolderView: View {
 
     private var titleText: String {
         if isFinderSearchEmptyState {
-            return "No search results"
+            return String(localized: "No search results")
         }
         if hasSearchText || viewModel.filterTag != nil {
-            return "No matching items"
+            return String(localized: "No matching items")
         }
-        return "This folder is empty"
+        return String(localized: "This folder is empty")
     }
 
     private var subtitleText: String? {
         if isFinderSearchEmptyState {
-            return "No results for \"\(viewModel.searchText)\" in this location."
+            return String(localized: "No results for \"\(viewModel.searchText)\" in this location.")
         }
         if hasSearchText, let tag = viewModel.filterTag {
-            return "No items match \"\(viewModel.searchText)\" with the tag \"\(tag)\"."
+            return String(localized: "No items match \"\(viewModel.searchText)\" with the tag \"\(tag)\".")
         }
         if hasSearchText {
-            return "No items match \"\(viewModel.searchText)\" in this folder."
+            return String(localized: "No items match \"\(viewModel.searchText)\" in this folder.")
         }
         if let tag = viewModel.filterTag {
-            return "No items in this folder have the tag \"\(tag)\"."
+            return String(localized: "No items in this folder have the tag \"\(tag)\".")
         }
         return nil
     }
@@ -1426,7 +1540,7 @@ struct EmptyFolderView: View {
     }
 
     private var clearSearchButtonTitle: String {
-        viewModel.searchMode == .finder ? "Clear Search" : "Clear Filter"
+        viewModel.searchMode == .finder ? String(localized: "Clear Search") : String(localized: "Clear Filter")
     }
 
     var body: some View {
@@ -1462,7 +1576,7 @@ struct EmptyFolderView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .uiBackground(.content)
         // Dropping into an empty folder works like dropping on any folder background.
         .onDrop(of: DropHelper.acceptedDropTypes, delegate: ContainerDropDelegate(
             viewModel: viewModel,
@@ -1488,6 +1602,8 @@ struct EmptyFolderView: View {
             Button("Show in Finder") {
                 NSWorkspace.shared.activateFileViewerSelecting([viewModel.currentPath])
             }
+
+            CustomBackgroundMenu(viewModel: viewModel)
         }
     }
 }
@@ -1518,7 +1634,7 @@ struct FolderLoadErrorView: View {
         }
         .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .uiBackground(.content)
     }
 }
 
@@ -1572,6 +1688,8 @@ struct TabContentWrapper: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .modifier(FolderTransition(path: viewModel.currentPath, key: contentViewId, isReady: !viewModel.isLoading))
+            .clipped()
 
             // Status bar (an archive copy-out in progress shows even when it's hidden)
             if settings.showStatusBar {
@@ -1585,7 +1703,7 @@ struct TabContentWrapper: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 4)
-                .background(Color(nsColor: .windowBackgroundColor))
+                .uiBackground(.chrome)
             }
         }
     }
@@ -1613,8 +1731,10 @@ struct TabContentWrapper: View {
             CoverFlowView(viewModel: viewModel, items: viewModel.filteredItems)
                 .id("coverflow-\(contentViewId)")
         case .icons:
-            IconGridView(viewModel: viewModel, items: viewModel.filteredItems, itemsRevision: viewModel.itemsRevision)
-                .id("icons-\(contentViewId)")
+            FolderLayoutSwitch(viewModel: viewModel) {
+                IconGridView(viewModel: viewModel, items: viewModel.filteredItems, itemsRevision: viewModel.itemsRevision)
+            }
+            .id("icons-\(contentViewId)")
         case .masonry:
             if viewModel.isPhotosLibraryActive {
                 PhotosMasonryView(viewModel: viewModel, items: viewModel.filteredItems)
@@ -1781,13 +1901,21 @@ final class VolumeLeaveTracker: ObservableObject {
 // Native macOS search field
 struct SearchField: NSViewRepresentable {
     @Binding var text: String
-    var placeholder: String = "Search"
+    var placeholder: String = String(localized: "Search")
     /// Posted as the `.focusFileList` object when Escape leaves the field (the active pane's view
     /// model), so only that pane's list takes focus. Falls back to the field's window.
     var focusTarget: AnyObject? = nil
+    /// Set while the field is being edited (the toolbar draws one focus ring around the whole search control).
+    var isFocused: Binding<Bool>? = nil
 
     func makeNSView(context: Context) -> NSSearchField {
-        let searchField = NSSearchField()
+        let searchField = IconlessSearchField()
+        if let isFocused {
+            searchField.drawsOwnFocusRing = false
+            searchField.onFocusChange = { focused in
+                DispatchQueue.main.async { isFocused.wrappedValue = focused }
+            }
+        }
         searchField.placeholderString = placeholder
         searchField.delegate = context.coordinator
         searchField.target = context.coordinator

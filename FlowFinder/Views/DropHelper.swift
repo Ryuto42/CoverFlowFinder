@@ -414,6 +414,8 @@ struct UnifiedFolderDropDelegate: DropDelegate {
     let item: FileItem
     let viewModel: FileBrowserViewModel
     @Binding var dropTargetedItemID: UUID?
+    /// Spring-loading opens the folder with this instead of browsing into it (Column view).
+    var springOpen: ((FileItem) -> Void)? = nil
 
     /// Folders take drops. A package (an app, a Photos library, an .rtfd …) isn't a folder things
     /// go into — except that files dropped on an application open in it, as in Finder.
@@ -485,6 +487,7 @@ struct UnifiedFolderDropDelegate: DropDelegate {
             return DropProposal(operation: .forbidden)
         }
         setTargeted()
+        springLoad()
         if isApplication {
             return DropProposal(operation: .copy)
         }

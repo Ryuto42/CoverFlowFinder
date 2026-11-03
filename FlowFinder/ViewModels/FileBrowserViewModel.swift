@@ -40,15 +40,15 @@ enum SearchMode: String, CaseIterable {
 
     var placeholder: String {
         switch self {
-        case .filter: return "Filter"
-        case .finder: return "Spotlight search..."
+        case .filter: return String(localized: "Filter this folder")
+        case .finder: return String(localized: "Search this Mac")
         }
     }
 
     var systemImage: String {
         switch self {
         case .filter: return "line.3.horizontal.decrease"
-        case .finder: return "magnifyingglass"
+        case .finder: return "sparkle.magnifyingglass"
         }
     }
 }
@@ -68,7 +68,7 @@ enum ArchiveCompressionFormat: String, CaseIterable, Hashable {
     case zip
     case sevenZip = "7z"
 
-    var title: String { self == .zip ? "Compress to ZIP" : "Compress to 7z" }
+    var title: String { self == .zip ? String(localized: "Compress to ZIP") : String(localized: "Compress to 7z") }
 
     static func eligibleItems(_ items: [FileItem]) -> [FileItem] {
         guard !items.isEmpty, items.allSatisfy({ !$0.isFromArchive && $0.url.isFileURL }) else { return [] }
@@ -86,12 +86,21 @@ enum ArchiveCompressionFormat: String, CaseIterable, Hashable {
 enum ArchiveCompressionEngine {
     static func compress(_ items: [FileItem], format: ArchiveCompressionFormat, destination: URL,
                          journal: FileOperationJournal, progress: Progress) -> FileOperationResult {
+        compress(items, archiveName: format.archiveName(for: items), destination: destination, journal: journal, progress: progress) {
+            try SevenZipArchiveBackend.shared.createArchive(at: $0, sources: $1, format: format, progress: $2)
+        }
+    }
+
+    /// `create` writes the archive (first argument) from the sources into the staging folder.
+    static func compress(_ items: [FileItem], archiveName: String, destination: URL,
+                         journal: FileOperationJournal, progress: Progress,
+                         create: (URL, [URL], Progress) throws -> Void) -> FileOperationResult {
         if progress.isCancelled { return FileOperationResult(wasCancelled: true) }
         do {
             guard !ArchiveCompressionFormat.eligibleItems(items).isEmpty,
                   destination.isFileURL,
                   try destination.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true else {
-                throw FileOperationEngine.makeError("Choose local files or folders and a folder for the archive.")
+                throw FileOperationEngine.makeError(String(localized: "Choose local files or folders and a folder for the archive."))
             }
             var sources: [(url: URL, path: String, directory: Bool)] = []
             for item in items {
@@ -100,7 +109,7 @@ enum ArchiveCompressionEngine {
                 guard lstat(url.path, &info) == 0 else { throw CocoaError(.fileReadNoSuchFile) }
                 let kind = info.st_mode & S_IFMT
                 guard kind == S_IFREG || kind == S_IFDIR || kind == S_IFLNK else {
-                    throw FileOperationEngine.makeError("“\(item.name)” is not a regular file or folder.")
+                    throw FileOperationEngine.makeError(String(localized: "“\(item.name)” is not a regular file or folder."))
                 }
                 let path = FileOperationEngine.canonicalItemPath(url)
                 if !sources.contains(where: { $0.path == path }) {
@@ -113,24 +122,24 @@ enum ArchiveCompressionEngine {
             }
             let destinationPath = FileOperationEngine.canonicalPath(destination)
             guard !sources.contains(where: { $0.directory && FileOperationEngine.isPath(destinationPath, sameAsOrInside: $0.path) }) else {
-                throw FileOperationEngine.makeError("Create the archive outside the selected folders.")
+                throw FileOperationEngine.makeError(String(localized: "Create the archive outside the selected folders."))
             }
             // Relative paths put each selected root at the archive's top level.
             let names = sources.map { $0.url.lastPathComponent.precomposedStringWithCanonicalMapping.lowercased() }
             guard Set(names).count == names.count else {
-                throw FileOperationEngine.makeError("Selected items from different folders have the same name. Compress them separately.")
+                throw FileOperationEngine.makeError(String(localized: "Selected items from different folders have the same name. Compress them separately."))
             }
             let staging = destination.appendingPathComponent(".FlowFinder-compress-" + UUID().uuidString, isDirectory: true)
             try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false,
                                                     attributes: [.posixPermissions: 0o700])
             defer { try? FileManager.default.removeItem(at: staging) }
-            let archive = staging.appendingPathComponent(format.archiveName(for: items))
+            let archive = staging.appendingPathComponent(archiveName)
             progress.totalUnitCount = 100
             let compression = Progress(totalUnitCount: 1)
             progress.addChild(compression, withPendingUnitCount: 99)
             let publication = Progress(totalUnitCount: 1)
             progress.addChild(publication, withPendingUnitCount: 1)
-            try SevenZipArchiveBackend.shared.createArchive(at: archive, sources: sources.map(\.url), format: format, progress: compression)
+            try create(archive, sources.map(\.url), compression)
             if progress.isCancelled { return FileOperationResult(wasCancelled: true) }
             let published = FileOperationJournal()
             let result = FileOperationEngine.transfer([
@@ -156,14 +165,14 @@ enum ArchiveExtractionMode: CaseIterable, Hashable {
 
     func title(for items: [FileItem]) -> String {
         switch self {
-        case .here: return "Extract Here"
+        case .here: return String(localized: "Extract Here")
         case .separateFolders:
             if items.count == 1 {
                 let name = ArchiveManager.extractionFolderName(for: URL(fileURLWithPath: items[0].name))
-                return "Extract to “\(name)” Folder"
+                return String(localized: "Extract to “\(name)” Folder")
             }
-            return "Extract to Separate Folders"
-        case .chosenFolder: return items.count > 1 ? "Extract All to One Folder…" : "Extract to Folder…"
+            return String(localized: "Extract to Separate Folders")
+        case .chosenFolder: return items.count > 1 ? String(localized: "Extract All to One Folder…") : String(localized: "Extract to Folder…")
         }
     }
 
@@ -176,12 +185,12 @@ enum ArchiveExtractionMode: CaseIterable, Hashable {
 /// Runs off the main thread. Extraction uses the same verified writer as archive browsing;
 /// publishing keeps both names on conflicts and records the new files for Undo / Redo.
 enum ArchiveExtractionEngine {
-    static func extract(_ items: [FileItem], mode: ArchiveExtractionMode, destination: URL? = nil,
+    static func extract(_ items: [FileItem], mode: ArchiveExtractionMode, destination: URL? = nil, wrapsSeveralItems: Bool = false,
                         journal: FileOperationJournal, progress: Progress) -> FileOperationResult {
         var result = FileOperationResult()
         if mode == .chosenFolder, destination == nil {
             return FileOperationResult(failures: items.map {
-                FileOperationFailure(url: $0.url, error: FileOperationEngine.makeError("Choose a folder to extract the archive into."))
+                FileOperationFailure(url: $0.url, error: FileOperationEngine.makeError(String(localized: "Choose a folder to extract the archive into.")))
             })
         }
         let manager = ArchiveManager.shared
@@ -197,7 +206,7 @@ enum ArchiveExtractionEngine {
                 let directory = destination ?? manager.rootArchiveURL(for: original).deletingLastPathComponent()
                 guard directory.isFileURL,
                       try directory.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true else {
-                    throw FileOperationEngine.makeError("Choose a folder to extract the archive into.")
+                    throw FileOperationEngine.makeError(String(localized: "Choose a folder to extract the archive into."))
                 }
                 let source: URL
                 if item.isFromArchive, let parent = item.archiveURL, let path = item.archivePath {
@@ -209,9 +218,11 @@ enum ArchiveExtractionEngine {
                     FileOperationFailure(url: item.url.appendingPathComponent($0.path), error: $0.error)
                 }
                 if progress.isCancelled { result.wasCancelled = true; break }
-                let roots = mode == .separateFolders ? [staged.url]
+                var roots = mode == .separateFolders ? [staged.url]
                     : try FileManager.default.contentsOfDirectory(at: staged.url, includingPropertiesForKeys: nil)
                         .sorted { $0.lastPathComponent < $1.lastPathComponent }
+                // Archive Utility: one item is placed as is, several go in a folder named after the archive
+                if wrapsSeveralItems, roots.count > 1 { roots = [staged.url] }
                 let transfers = roots.map {
                     FileTransferItem(source: $0, destination: directory.appendingPathComponent($0.lastPathComponent),
                                      kind: .move, placement: .keepBoth)
@@ -529,17 +540,17 @@ enum FileOperationAlerts {
         let alert = NSAlert()
         alert.alertStyle = .warning
         if failures.count == 1, let failure = failures.first {
-            alert.messageText = "“\(displayName(failure.url))” couldn’t be \(verb)."
+            alert.messageText = String(localized: "“\(displayName(failure.url))” couldn’t be \(verb).")
             alert.informativeText = reason(for: failure.error)
         } else {
-            alert.messageText = "\(failures.count) items couldn’t be \(verb)."
+            alert.messageText = String(localized: "\(failures.count) items couldn’t be \(verb).")
             var lines = failures.prefix(5).map { "“\(displayName($0.url))”: \(reason(for: $0.error))" }
             if failures.count > 5 {
                 lines.append("…and \(failures.count - 5) more.")
             }
             alert.informativeText = lines.joined(separator: "\n")
         }
-        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: String(localized: "OK"))
         show(alert, in: window)
     }
 
@@ -548,7 +559,7 @@ enum FileOperationAlerts {
         alert.alertStyle = .warning
         alert.messageText = message
         alert.informativeText = information
-        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: String(localized: "OK"))
         show(alert, in: window)
     }
 
@@ -712,20 +723,20 @@ enum FileOperationEngine {
                     destination = uniqueDestinationURL(for: destination)
                     break
                 }
-                let verb = item.kind == .move ? "moving" : "copying"
+                let verb = item.kind == .move ? String(localized: "moving") : String(localized: "copying")
                 if isPath(sourcePaths[index], sameAsOrInside: destinationPath) || isSameItem(source, destination) {
-                    let error = makeError("“\(displayName(destination))” can’t be replaced because it contains the item you’re \(verb).")
+                    let error = makeError(String(localized: "“\(displayName(destination))” can’t be replaced because it contains the item you’re \(verb)."))
                     result.failures.append(FileOperationFailure(url: source, error: error))
                     continue
                 }
                 if let later = sourcePaths[(index + 1)...].firstIndex(where: { isPath($0, sameAsOrInside: destinationPath) }) {
-                    let error = makeError("“\(displayName(destination))” can’t be replaced because it contains “\(displayName(active[later].source))”, which you’re also \(verb).")
+                    let error = makeError(String(localized: "“\(displayName(destination))” can’t be replaced because it contains “\(displayName(active[later].source))”, which you’re also \(verb)."))
                     result.failures.append(FileOperationFailure(url: source, error: error))
                     continue
                 }
                 do {
                     guard let trashedURL = try moveToTrash(destination) else {
-                        throw makeError("The existing item couldn’t be moved to the Trash.")
+                        throw makeError(String(localized: "The existing item couldn’t be moved to the Trash."))
                     }
                     replaced = (destination, trashedURL)
                 } catch {
@@ -930,7 +941,7 @@ enum FileOperationEngine {
     /// Moves an item to the Trash, refusing volumes: trashing a mount point would empty the volume.
     static func moveToTrash(_ url: URL) throws -> URL? {
         if isMountPoint(url) {
-            throw makeError("“\(displayName(url))” is a volume. Volumes can only be ejected.")
+            throw makeError(String(localized: "“\(displayName(url))” is a volume. Volumes can only be ejected."))
         }
         return try trashItem(url)
     }
@@ -948,6 +959,7 @@ enum FileOperationEngine {
             } else {
                 try FileManager.default.copyItem(at: source, to: destination)
             }
+            CopiedDates.preserve(from: source, to: destination)
         } catch {
             removePartialCopy(destination)
             throw error
@@ -984,10 +996,10 @@ enum FileOperationEngine {
         try copyItem(at: source, to: destination, progress: progress, completedBefore: completedBefore)
         guard copyMatchesOriginal(source, destination) else {
             removePartialCopy(destination)
-            throw makeError("The copy of “\(name)” didn’t match the original, so the original was kept.")
+            throw makeError(String(localized: "The copy of “\(name)” didn’t match the original, so the original was kept."))
         }
         if let obstacle = obstacleToRemoving(source) {
-            let message = "“\(name)” was copied, but the original couldn’t be removed because \(obstacle). The original was kept."
+            let message = String(localized: "“\(name)” was copied, but the original couldn’t be removed because \(obstacle). The original was kept.")
             failures.append(FileOperationFailure(url: source, error: makeError(message)))
             return .copied(from: source, to: destination)
         }
@@ -996,12 +1008,12 @@ enum FileOperationEngine {
         } catch {
             let reason = (error as NSError).localizedDescription
             if restoreRemovedItems(of: source, from: destination) {
-                let message = "“\(name)” was copied, but the original couldn’t be removed: \(reason) The original was kept."
+                let message = String(localized: "“\(name)” was copied, but the original couldn’t be removed: \(reason) The original was kept.")
                 failures.append(FileOperationFailure(url: source, error: makeError(message)))
                 return .copied(from: source, to: destination)
             }
             // The copy is the only complete one: record a move, so Undo moves it back.
-            let message = "“\(name)” was moved, but part of the original couldn’t be removed: \(reason)"
+            let message = String(localized: "“\(name)” was moved, but part of the original couldn’t be removed: \(reason)")
             failures.append(FileOperationFailure(url: source, error: makeError(message)))
             return .moved(from: source, to: destination)
         }
@@ -1152,24 +1164,24 @@ enum FileOperationEngine {
         var info = stat()
         guard lstat(path, &info) == 0 else { return nil }
         if !canRemoveEntry(owner: info.st_uid, fromDirectory: (path as NSString).deletingLastPathComponent) {
-            return "you don’t have permission to change the folder it’s in"
+            return String(localized: "you don’t have permission to change the folder it’s in")
         }
         if isLocked(info) {
-            return "it’s locked"
+            return String(localized: "it’s locked")
         }
         guard (info.st_mode & S_IFMT) == S_IFDIR else { return nil }
         if access(path, W_OK | X_OK) != 0 {
-            return "you don’t have permission to change it"
+            return String(localized: "you don’t have permission to change it")
         }
         guard let enumerator = FileManager.default.enumerator(atPath: path) else { return nil }
         while let relative = enumerator.nextObject() as? String {
             let childPath = (path as NSString).appendingPathComponent(relative)
             guard lstat(childPath, &info) == 0 else { continue }
             if isLocked(info) {
-                return "it contains locked items"
+                return String(localized: "it contains locked items")
             }
             if (info.st_mode & S_IFMT) == S_IFDIR, access(childPath, W_OK | X_OK) != 0 {
-                return "you don’t have permission to change some of the folders in it"
+                return String(localized: "you don’t have permission to change some of the folders in it")
             }
         }
         return nil
@@ -1366,7 +1378,7 @@ enum FileOperationEngine {
 
     /// The name as Finder shows it (":" on disk is displayed as "/").
     static func displayName(_ url: URL) -> String {
-        url.lastPathComponent.replacingOccurrences(of: ":", with: "/")
+        url.finderDisplayName
     }
 
     /// The on-disk name for a name typed by the user: Finder stores "/" as ":".
@@ -1377,10 +1389,10 @@ enum FileOperationEngine {
     /// Why `name` can't be used as a file name, or `nil` if it can.
     static func problemWithFileName(_ name: String) -> String? {
         if name.isEmpty || name == "." || name == ".." || name.contains("\0") {
-            return "The name “\(name)” can’t be used."
+            return String(localized: "The name “\(name)” can’t be used.")
         }
         if name.utf8.count > 255 {
-            return "The name is too long."
+            return String(localized: "The name is too long.")
         }
         return nil
     }
@@ -1458,6 +1470,7 @@ extension FileOperationEngine {
 
     @MainActor static func operationDidStart(_ progress: Progress) {
         running[ObjectIdentifier(progress)] = progress
+        DockProgress.shared.track(progress)
     }
 
     @MainActor static func operationDidEnd(_ progress: Progress) {
@@ -1642,8 +1655,12 @@ class FileBrowserViewModel: ObservableObject {
     @Published var selectedItems: Set<FileItem> = []
     @Published var viewMode: ViewMode = .coverFlow
     @Published var searchText: String = ""
-    @Published var searchMode: SearchMode = .filter
+    @Published var searchMode: SearchMode = SearchMode.lastUsed {
+        didSet { SearchMode.lastUsed = searchMode }
+    }
     @Published var filterTag: String? = nil
+    /// Git "changed files only" filter: the items to keep, or nil when off (see `GitPathBarAccessory`)
+    @Published var gitChangesFilter: Set<URL>? = nil
     @Published var isLoading: Bool = false
     @Published var isSearching: Bool = false
     /// Why the current folder couldn't be listed (no permission, gone, …), or nil. The views show it
@@ -1709,6 +1726,7 @@ class FileBrowserViewModel: ObservableObject {
         )
     }
     private var spotlightSearch: SpotlightSearchSession?
+    let recursiveFilter = RecursiveFilterSearch()
     private var spotlightSearchToken = UUID()
     /// Stable IDs for Spotlight results, by path (kept while the search UI stays in use).
     private var spotlightIDsByPath: [String: UUID] = [:]
@@ -1781,10 +1799,12 @@ class FileBrowserViewModel: ObservableObject {
         let foldersFirst: Bool
         /// Tag edits change what the tag filter and the Tags sort produce
         let tagRefreshToken: Int
+        var gitChangesFilter: Set<URL>? = nil
 
         func withItemsRevision(_ revision: Int) -> FilteredItemsCacheKey {
             FilteredItemsCacheKey(itemsRevision: revision, searchText: searchText, filterTag: filterTag,
-                                  sortState: sortState, foldersFirst: foldersFirst, tagRefreshToken: tagRefreshToken)
+                                  sortState: sortState, foldersFirst: foldersFirst, tagRefreshToken: tagRefreshToken,
+                                  gitChangesFilter: gitChangesFilter)
         }
     }
     private var filteredItemsCacheKey: FilteredItemsCacheKey?
@@ -1824,7 +1844,7 @@ class FileBrowserViewModel: ObservableObject {
     private var isNetworkBrowsing = false
     private var smbSubnetScanner: SMBSubnetScanner?
     private var discoveredSMBHosts: [SMBHostInfo] = []
-    private var isBackgroundWorkActive = true
+    private(set) var isBackgroundWorkActive = true
     private var needsReloadOnResume = false
     /// Set by `tearDown()`; the view model does no further background work.
     private var isTornDown = false
@@ -1944,7 +1964,7 @@ class FileBrowserViewModel: ObservableObject {
         // unchanged or longer
         var remaining = 256
         while url.path != "/", !url.path.isEmpty, remaining > 0 {
-            pathComps.insert((name: url.lastPathComponent, url: url), at: 0)
+            pathComps.insert((name: url.finderDisplayName, url: url), at: 0)
             let parent = url.deletingLastPathComponent()
             guard parent.path.count < url.path.count else { break }
             url = parent
@@ -2031,7 +2051,12 @@ class FileBrowserViewModel: ObservableObject {
             return sortedSearchResultsStructuralToken
         case .filter:
             _ = filterCurrentDirectoryItems()
-            return filteredItemsStructuralToken
+            guard showsRecursiveFilterResults else { return filteredItemsStructuralToken }
+            _ = sortedSearchResults
+            var hasher = Hasher()
+            hasher.combine(filteredItemsStructuralToken)
+            hasher.combine(sortedSearchResultsStructuralToken)
+            return hasher.finalize()
         }
     }
 
@@ -2048,7 +2073,7 @@ class FileBrowserViewModel: ObservableObject {
 
         case .filter:
             // Don't log filter mode to reduce noise
-            return filterCurrentDirectoryItems()
+            return withRecursiveFilterResults(filterCurrentDirectoryItems())
         }
     }
 
@@ -2080,7 +2105,8 @@ class FileBrowserViewModel: ObservableObject {
             filterTag: filterTag,
             sortState: sortState,
             foldersFirst: foldersFirst,
-            tagRefreshToken: tagsMatter ? tagRefreshToken : 0
+            tagRefreshToken: tagsMatter ? tagRefreshToken : 0,
+            gitChangesFilter: gitChangesFilter
         )
 
         if let cachedKey = filteredItemsCacheKey, cachedKey == cacheKey {
@@ -2104,7 +2130,7 @@ class FileBrowserViewModel: ObservableObject {
         // Filter by search text (only in filter mode)
         if searchMode == .filter && !searchText.isEmpty {
             filtered = filtered.filter {
-                $0.displayName.localizedCaseInsensitiveContains(searchText)
+                RecursiveFilterSearch.nameMatches($0.displayName, searchText)
             }
         }
 
@@ -2113,6 +2139,10 @@ class FileBrowserViewModel: ObservableObject {
             filtered = filtered.filter { item in
                 item.tags.contains(tag)
             }
+        }
+
+        if let gitChangesFilter {
+            filtered = filtered.filter { gitChangesFilter.contains($0.url) }
         }
 
         let sorted = sortItemsForBackground(filtered, sortState: sortState, foldersFirst: foldersFirst)
@@ -2214,6 +2244,9 @@ class FileBrowserViewModel: ObservableObject {
                     // Filter mode with non-empty text — trigger view update for filtering
                     self.objectWillChange.send()
                 }
+                if self.searchMode == .filter {
+                    self.updateRecursiveFilter()
+                }
             }
             .store(in: &cancellables)
 
@@ -2229,6 +2262,8 @@ class FileBrowserViewModel: ObservableObject {
                 // If switching to a search mode with existing text, trigger search
                 if newMode != .filter && !self.searchText.isEmpty {
                     self.performSearch(query: self.searchText, mode: newMode)
+                } else if newMode == .filter && !self.searchText.isEmpty {
+                    DispatchQueue.main.async { self.updateRecursiveFilter() }
                 }
             }
             .store(in: &cancellables)
@@ -2491,12 +2526,12 @@ class FileBrowserViewModel: ObservableObject {
         }
         if nsError.domain == NSCocoaErrorDomain && nsError.code == NSFileReadNoPermissionError
             || posixCode == EACCES || posixCode == EPERM {
-            return "The folder “\(name)” can’t be opened because you don’t have permission to see its contents."
+            return String(localized: "The folder “\(name)” can’t be opened because you don’t have permission to see its contents.")
         }
         if nsError.domain == NSCocoaErrorDomain && nsError.code == NSFileReadNoSuchFileError || posixCode == ENOENT {
-            return "The folder “\(name)” can’t be found."
+            return String(localized: "The folder “\(name)” can’t be found.")
         }
-        return "The folder “\(name)” can’t be opened. \(nsError.localizedDescription)"
+        return String(localized: "The folder “\(name)” can’t be opened. \(nsError.localizedDescription)")
     }
 
     /// An item produced off the main thread together with its path key.
@@ -2620,6 +2655,7 @@ class FileBrowserViewModel: ObservableObject {
             pruneItemIDs()
         }
 
+        openExtractedFolders(isReload: isReload)
         applySelectionAfterLoad(isReload: isReload)
         triggerPendingNewFolderRename()
         if currentFolderIsInICloud, items.count <= directoryBatchSize {
@@ -2927,6 +2963,7 @@ class FileBrowserViewModel: ObservableObject {
         if folderColumns != columns {
             folderColumns = columns
         }
+        FolderViewOptionsStore.shared.apply(to: self, folder: url)
     }
 
     /// Reloads for a sort change on the next run-loop turn, once for quick successive changes.
@@ -3015,7 +3052,7 @@ class FileBrowserViewModel: ObservableObject {
         let photosLoadInFlight = photosLoadCancellation != nil
         let networkScanInFlight = isNetworkBrowsing && !networkScanFinished
         needsReloadOnResume = needsReloadOnResume || isLoading || photosLoadInFlight || networkScanInFlight
-        searchNeedsRerunOnResume = searchNeedsRerunOnResume || (isSearching && spotlightSearch != nil)
+        searchNeedsRerunOnResume = searchNeedsRerunOnResume || (isSearching && (spotlightSearch != nil || recursiveFilter.isRunning))
         isLoading = false
         directoryLoadToken = UUID()
         directoryLoadCancellation?.cancel()
@@ -3070,6 +3107,8 @@ class FileBrowserViewModel: ObservableObject {
             searchNeedsRerunOnResume = false
             if searchMode == .finder, !searchText.isEmpty {
                 performSearch(query: searchText)
+            } else if searchMode == .filter {
+                updateRecursiveFilter()
             }
         }
     }
@@ -3688,7 +3727,7 @@ class FileBrowserViewModel: ObservableObject {
             // Show error alert
             DispatchQueue.main.async {
                 let alert = NSAlert()
-                alert.messageText = "Download Failed"
+                alert.messageText = String(localized: "Download Failed")
                 alert.informativeText = error.localizedDescription
                 alert.alertStyle = .warning
                 alert.runModal()
@@ -3708,7 +3747,7 @@ class FileBrowserViewModel: ObservableObject {
         } catch {
             DispatchQueue.main.async {
                 let alert = NSAlert()
-                alert.messageText = "Remove Download Failed"
+                alert.messageText = String(localized: "Remove Download Failed")
                 alert.informativeText = error.localizedDescription
                 alert.alertStyle = .warning
                 alert.runModal()
@@ -4081,6 +4120,7 @@ class FileBrowserViewModel: ObservableObject {
         if !removedIDs.isEmpty || appended {
             items = updatedItems
             refreshSelectedItems()
+            openExtractedFolders(isReload: true)
             // NOTE: Don't increment navigationGeneration here - incremental updates
             // should not cause full view recreation which loses scroll position
         } else if !replaced.isEmpty {
@@ -4483,15 +4523,15 @@ class FileBrowserViewModel: ObservableObject {
 
     private func showPhotosAccessAlert(for status: PHAuthorizationStatus) {
         let alert = NSAlert()
-        alert.messageText = "Photos Access Needed"
+        alert.messageText = String(localized: "Photos Access Needed")
         if status == .restricted {
-            alert.informativeText = "Photos access is restricted on this Mac. Check Screen Time or configuration profiles."
+            alert.informativeText = String(localized: "Photos access is restricted on this Mac. Check Screen Time or configuration profiles.")
         } else {
-            alert.informativeText = "Allow Photos access in System Settings to show your full library."
+            alert.informativeText = String(localized: "Allow Photos access in System Settings to show your full library.")
         }
         alert.alertStyle = .informational
-        alert.addButton(withTitle: "Open System Settings")
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: String(localized: "Open System Settings"))
+        alert.addButton(withTitle: String(localized: "Cancel"))
 
         if let window = NSApp.mainWindow {
             alert.beginSheetModal(for: window) { response in
@@ -4782,6 +4822,10 @@ class FileBrowserViewModel: ObservableObject {
     }
 
     private func refreshFinderSearchScopeIfNeeded() {
+        if searchMode == .filter {
+            updateRecursiveFilter()
+            return
+        }
         guard searchMode == .finder, !searchText.isEmpty else { return }
         searchResults = []
         performSearch(query: searchText)
@@ -4810,6 +4854,7 @@ class FileBrowserViewModel: ObservableObject {
         pendingNewFolderRenameURL = nil
         // Only applies while the folder entered is shown (`enterFolder` sets it after navigating)
         enteredFolder = nil
+        stopRecursiveFilter()
     }
 
     private func resetArchiveState() {
@@ -4999,7 +5044,7 @@ class FileBrowserViewModel: ObservableObject {
         archiveReadProgress = progress
         archiveReadToken = token
         FileOperationEngine.operationDidStart(progress)
-        showActivity(progress, title: "Opening Archive")
+        showActivity(progress, title: String(localized: "Opening Archive"))
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
             // Still reading (the token is replaced when the read completes or is superseded)
             guard let self, self.archiveReadToken == token else { return }
@@ -5027,6 +5072,7 @@ class FileBrowserViewModel: ObservableObject {
 
     func openItem(_ item: FileItem) {
         cancelPendingRename()
+        if openFolderInNewTabIfCommandHeld(item) { return }
 
         if isPhotosItem(item) {
             exportPhotoAsset(for: item) { url in
@@ -5054,8 +5100,12 @@ class FileBrowserViewModel: ObservableObject {
             return
         }
 
+        if DiskImageMounter.shared.open(item, from: self) { return }
+        if SmartFolderSearch.open(item.url, in: self) { return }
+
         // Browse a supported archive
         if item.isBrowsableArchive {
+            if extractOnFirstOpen(item) { return }
             enterArchive(at: item.url)
             return
         }
@@ -5078,6 +5128,7 @@ class FileBrowserViewModel: ObservableObject {
         } else if item.isDirectory {
             enterFolder(item.url, from: item.url)
         } else {
+            ExtractionReveal.noteOpened(item)
             NSWorkspace.shared.open(item.url)
         }
     }
@@ -5155,7 +5206,7 @@ class FileBrowserViewModel: ObservableObject {
             case .failure(let error):
                 zipNavLogger.error("Error reading archive: \(error.localizedDescription)")
                 if (error as NSError).code != CocoaError.userCancelled.rawValue {
-                    FileOperationAlerts.reportFailures([FileOperationFailure(url: url, error: error)], verb: "opened")
+                    FileOperationAlerts.reportFailures([FileOperationFailure(url: url, error: error)], verb: String(localized: "opened"))
                 }
             }
         }
@@ -5190,9 +5241,9 @@ class FileBrowserViewModel: ObservableObject {
             KeyboardManager.shared.focusFileArea(in: window)
         }
         runFileOperation(
-            actionName: "Compress to " + (format == .zip ? "ZIP" : "7z"),
-            failureVerb: "compressed",
-            title: sources.count == 1 ? "Compressing “\(sources[0].name)”" : "Compressing \(sources.count) items",
+            actionName: format.title,
+            failureVerb: String(localized: "compressed"),
+            title: sources.count == 1 ? String(localized: "Compressing “\(sources[0].name)”") : String(localized: "Compressing \(sources.count) items"),
             window: window,
             work: { journal, progress in
                 ArchiveCompressionEngine.compress(sources, format: format, destination: destination, journal: journal, progress: progress)
@@ -5207,6 +5258,29 @@ class FileBrowserViewModel: ObservableObject {
                self.isShownLocation(archive.deletingLastPathComponent()) {
                 self.pendingSelectionURLs = [archive]
                 self.pendingSelectionURL = archive
+            }
+            self.refresh()
+        }
+    }
+
+    /// Custom: runs an operation that only creates new items (compress / convert) with progress and
+    /// Undo, then selects what it created.
+    func runCreatingOperation(actionName: String, failureVerb: String, title: String,
+                              work: @escaping (FileOperationJournal, Progress) -> FileOperationResult) {
+        let window = commandWindow()
+        cancelPendingRename()
+        if renamingURL == nil {
+            KeyboardManager.shared.focusFileArea(in: window)
+        }
+        runFileOperation(actionName: actionName, failureVerb: failureVerb, title: title, window: window, work: work) { [weak self] journal, _ in
+            guard let self else { return }
+            let created = journal.steps.compactMap { step -> URL? in
+                if case .created(let url) = step, !self.isInsideArchive, self.isShownLocation(url.deletingLastPathComponent()) { return url }
+                return nil
+            }
+            if let first = created.first {
+                self.pendingSelectionURLs = Set(created)
+                self.pendingSelectionURL = first
             }
             self.refresh()
         }
@@ -5231,7 +5305,7 @@ class FileBrowserViewModel: ObservableObject {
         let progress = Progress(totalUnitCount: max(1, item.size))
         archiveReadProgress = progress
         FileOperationEngine.operationDidStart(progress)
-        showActivity(progress, title: "Opening Archive")
+        showActivity(progress, title: String(localized: "Opening Archive"))
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = Result { try ArchiveManager.shared.openNestedArchive(at: path, in: parent, progress: progress) }
             DispatchQueue.main.async {
@@ -5244,23 +5318,23 @@ class FileBrowserViewModel: ObservableObject {
                 case .success(let url): self.enterArchive(at: url)
                 case .failure(let error):
                     if (error as NSError).code != CocoaError.userCancelled.rawValue {
-                        FileOperationAlerts.reportFailures([FileOperationFailure(url: item.url, error: error)], verb: "opened")
+                        FileOperationAlerts.reportFailures([FileOperationFailure(url: item.url, error: error)], verb: String(localized: "opened"))
                     }
                 }
             }
         }
     }
 
-    func extractArchives(_ targets: [FileItem]? = nil, mode: ArchiveExtractionMode, destination: URL? = nil) {
+    func extractArchives(_ targets: [FileItem]? = nil, mode: ArchiveExtractionMode, destination: URL? = nil, wrapsSeveralItems: Bool = false) {
         let archives = ArchiveExtractionMode.eligibleItems(targets ?? selectedArchivesForExtraction)
         guard !archives.isEmpty else { return }
         let window = commandWindow()
         if mode == .chosenFolder, destination == nil {
             let panel = NSOpenPanel()
-            panel.title = archives.count == 1 ? "Extract Archive" : "Extract Archives"
-            panel.message = archives.count == 1 ? "Choose a folder for the extracted contents."
-                : "Choose one folder for the contents of all \(archives.count) archives."
-            panel.prompt = "Extract"
+            panel.title = archives.count == 1 ? String(localized: "Extract Archive") : String(localized: "Extract Archives")
+            panel.message = archives.count == 1 ? String(localized: "Choose a folder for the extracted contents.")
+                : String(localized: "Choose one folder for the contents of all \(archives.count) archives.")
+            panel.prompt = String(localized: "Extract")
             panel.canChooseDirectories = true
             panel.canChooseFiles = false
             panel.canCreateDirectories = true
@@ -5276,12 +5350,12 @@ class FileBrowserViewModel: ObservableObject {
             return
         }
         runFileOperation(
-            actionName: archives.count == 1 ? "Extract Archive" : "Extract Archives",
-            failureVerb: "extracted",
-            title: archives.count == 1 ? "Extracting “\(archives[0].name)”" : "Extracting \(archives.count) archives",
+            actionName: archives.count == 1 ? String(localized: "Extract Archive") : String(localized: "Extract Archives"),
+            failureVerb: String(localized: "extracted"),
+            title: archives.count == 1 ? String(localized: "Extracting “\(archives[0].name)”") : String(localized: "Extracting \(archives.count) archives"),
             window: window,
             work: { journal, progress in
-                ArchiveExtractionEngine.extract(archives, mode: mode, destination: destination, journal: journal, progress: progress)
+                ArchiveExtractionEngine.extract(archives, mode: mode, destination: destination, wrapsSeveralItems: wrapsSeveralItems, journal: journal, progress: progress)
             }
         ) { [weak self] journal, _ in
             guard let self else { return }
@@ -5295,6 +5369,7 @@ class FileBrowserViewModel: ObservableObject {
                 self.pendingSelectionURL = shown.first
             }
             self.refresh()
+            self.openExtractedFolders(created)
         }
     }
 
@@ -5370,7 +5445,7 @@ class FileBrowserViewModel: ObservableObject {
         let progress = Progress(totalUnitCount: max(1, item.size))
         let window = commandWindow()
         FileOperationEngine.operationDidStart(progress)
-        showActivity(progress, title: "Opening File")
+        showActivity(progress, title: String(localized: "Opening File"))
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = Result { try ArchiveManager.shared.extractByPath(archivePath, from: archiveURL, progress: progress) }
             DispatchQueue.main.async {
@@ -5380,7 +5455,7 @@ class FileBrowserViewModel: ObservableObject {
                 case .success(let url): if !progress.isCancelled { NSWorkspace.shared.open(url) }
                 case .failure(let error):
                     if (error as NSError).code != CocoaError.userCancelled.rawValue {
-                        FileOperationAlerts.reportFailures([FileOperationFailure(url: item.url, error: error)], verb: "opened", in: window)
+                        FileOperationAlerts.reportFailures([FileOperationFailure(url: item.url, error: error)], verb: String(localized: "opened"), in: window)
                     }
                 }
             }
@@ -5406,7 +5481,7 @@ class FileBrowserViewModel: ObservableObject {
         }
         let progress = Progress(totalUnitCount: max(1, item.size))
         FileOperationEngine.operationDidStart(progress)
-        showActivity(progress, title: "Preparing Preview")
+        showActivity(progress, title: String(localized: "Preparing Preview"))
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = Result { try ArchiveManager.shared.extractByPath(path, from: archive, progress: progress) }
             DispatchQueue.main.async {
@@ -5417,7 +5492,7 @@ class FileBrowserViewModel: ObservableObject {
                 case .failure(let error):
                     completion(nil)
                     if (error as NSError).code != CocoaError.userCancelled.rawValue {
-                        FileOperationAlerts.reportFailures([FileOperationFailure(url: item.url, error: error)], verb: "previewed")
+                        FileOperationAlerts.reportFailures([FileOperationFailure(url: item.url, error: error)], verb: String(localized: "previewed"))
                     }
                 }
             }
@@ -5710,7 +5785,7 @@ class FileBrowserViewModel: ObservableObject {
     /// user's command, so the undo stack keeps the order of commands — and reads the journal when
     /// it runs, which is after `work` because the queue is serial. Undoing before `work` has
     /// finished stops it first.
-    private func runFileOperation(
+    func runFileOperation(
         actionName: String?,
         failureVerb: String,
         title: String,
@@ -5765,7 +5840,7 @@ class FileBrowserViewModel: ObservableObject {
             reversal.progress = progress
             registerUndo(reversing: reversal, actionName: actionName, undoManager: undoManager, viewModel: viewModel, window: window)
             FileOperationEngine.operationDidStart(progress)
-            viewModel?.showActivity(progress, title: "Undoing \(actionName)")
+            viewModel?.showActivity(progress, title: String(localized: "Undoing \(actionName)"))
             FileOperationEngine.queue.async {
                 let result = FileOperationEngine.reverse(journal.steps, journal: reversal, progress: progress)
                 DispatchQueue.main.async {
@@ -5776,7 +5851,7 @@ class FileBrowserViewModel: ObservableObject {
                     viewModel?.carryItemIDs(movedIn: reversal)
                     FileClipboard.shared.itemsDidMove(reversal.moves)
                     viewModel?.refresh()
-                    FileOperationAlerts.reportFailures(result.failures, verb: "restored", in: window)
+                    FileOperationAlerts.reportFailures(result.failures, verb: String(localized: "restored"), in: window)
                 }
             }
         }
@@ -5842,12 +5917,18 @@ class FileBrowserViewModel: ObservableObject {
                         return
                     }
                     let allCopies = items.allSatisfy { $0.kind == .copy }
-                    let actionName = origin == .duplicate ? "Duplicate" : (allCopies ? "Copy" : "Move")
-                    let verb = origin == .duplicate ? "duplicated" : (allCopies ? "copied" : "moved")
-                    let progressVerb = origin == .duplicate ? "Duplicating" : (allCopies ? "Copying" : "Moving")
-                    let title = items.count == 1
-                        ? "\(progressVerb) “\(FileOperationAlerts.displayName(items[0].source))”"
-                        : "\(progressVerb) \(items.count) items"
+                    let actionName = origin == .duplicate ? String(localized: "Duplicate") : (allCopies ? String(localized: "Copy") : String(localized: "Move"))
+                    let verb = origin == .duplicate ? String(localized: "duplicated") : (allCopies ? String(localized: "copied") : String(localized: "moved"))
+                    let firstName = FileOperationAlerts.displayName(items[0].source)
+                    let title: String
+                    switch (origin == .duplicate, allCopies, items.count == 1) {
+                    case (true, _, true): title = String(localized: "Duplicating “\(firstName)”")
+                    case (true, _, false): title = String(localized: "Duplicating \(items.count) items")
+                    case (false, true, true): title = String(localized: "Copying “\(firstName)”")
+                    case (false, true, false): title = String(localized: "Copying \(items.count) items")
+                    case (false, false, true): title = String(localized: "Moving “\(firstName)”")
+                    case (false, false, false): title = String(localized: "Moving \(items.count) items")
+                    }
                     self.runFileOperation(
                         actionName: actionName,
                         failureVerb: verb,
@@ -5855,7 +5936,8 @@ class FileBrowserViewModel: ObservableObject {
                         window: window,
                         initialFailures: plan.failures,
                         work: { journal, progress in FileOperationEngine.transfer(items, journal: journal, progress: progress) },
-                        completion: { journal, _ in
+                        completion: { [weak self] journal, _ in
+                            if let self { InstallerCleanup.noteTransfer(journal.steps, by: self) }
                             completion(journal)
                             // Copied or cut items moved by a drag stay on the clipboard where they are now.
                             FileClipboard.shared.itemsDidMove(journal.moves)
@@ -5966,16 +6048,20 @@ class FileBrowserViewModel: ObservableObject {
             break
         case let .intoItself(source, kind):
             let name = FileOperationAlerts.displayName(source)
-            let verb = kind == .move ? "moved" : "copied"
+            let verb = kind == .move ? String(localized: "moved") : String(localized: "copied")
             FileOperationAlerts.showMessage(
-                "“\(name)” can’t be \(verb) into itself.",
-                information: "The destination is inside the item you’re \(kind == .move ? "moving" : "copying").",
+                String(localized: "“\(name)” can’t be \(verb) into itself."),
+                information: kind == .move
+                    ? String(localized: "The destination is inside the item you’re moving.")
+                    : String(localized: "The destination is inside the item you’re copying."),
                 in: window
             )
         case let .sameName(name, kind):
             FileOperationAlerts.showMessage(
-                "The items can’t be \(kind == .move ? "moved" : "copied") because more than one of them is named “\(name)”.",
-                information: "Items in the same folder need different names. Rename one of them, then try again.",
+                kind == .move
+                    ? String(localized: "The items can’t be moved because more than one of them is named “\(name)”.")
+                    : String(localized: "The items can’t be copied because more than one of them is named “\(name)”."),
+                information: String(localized: "Items in the same folder need different names. Rename one of them, then try again."),
                 in: window
             )
         }
@@ -6027,17 +6113,19 @@ class FileBrowserViewModel: ObservableObject {
     private static func conflictAlert(for item: FileTransferItem, allowSkip: Bool, offerApplyToAll: Bool) -> NSAlert {
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "An item named “\(FileOperationAlerts.displayName(item.destination))” already exists in this location."
-        alert.informativeText = "Do you want to replace it with the one you’re \(item.kind == .move ? "moving" : "copying")?"
-        alert.addButton(withTitle: "Keep Both")
-        alert.addButton(withTitle: "Replace").hasDestructiveAction = true
+        alert.messageText = String(localized: "An item named “\(FileOperationAlerts.displayName(item.destination))” already exists in this location.")
+        alert.informativeText = item.kind == .move
+            ? String(localized: "Do you want to replace it with the one you’re moving?")
+            : String(localized: "Do you want to replace it with the one you’re copying?")
+        alert.addButton(withTitle: String(localized: "Keep Both"))
+        alert.addButton(withTitle: String(localized: "Replace")).hasDestructiveAction = true
         if allowSkip {
-            alert.addButton(withTitle: "Skip")
+            alert.addButton(withTitle: String(localized: "Skip"))
         }
-        alert.addButton(withTitle: "Stop").keyEquivalent = "\u{1b}"
+        alert.addButton(withTitle: String(localized: "Stop")).keyEquivalent = "\u{1b}"
         if offerApplyToAll {
             alert.showsSuppressionButton = true
-            alert.suppressionButton?.title = "Apply to All"
+            alert.suppressionButton?.title = String(localized: "Apply to All")
         }
         return alert
     }
@@ -6101,21 +6189,21 @@ class FileBrowserViewModel: ObservableObject {
         } else {
             updatedTags.append(tagName)
         }
-        return applyTags(updatedTags, to: url, actionName: "Tags", registerUndo: true, invalidateCache: invalidateCache)
+        return applyTags(updatedTags, to: url, actionName: String(localized: "Tags"), registerUndo: true, invalidateCache: invalidateCache)
     }
 
     /// Sets tags; returns false (and tells the user) when the tags couldn't be written.
     @discardableResult
     func setTags(_ tags: [String], for url: URL, invalidateCache: Bool = true) -> Bool {
-        applyTags(tags, to: url, actionName: "Tags", registerUndo: true, invalidateCache: invalidateCache)
+        applyTags(tags, to: url, actionName: String(localized: "Tags"), registerUndo: true, invalidateCache: invalidateCache)
     }
 
     private func presentTagEditFailure(for url: URL) {
         // Only when running as an app (not headless, e.g. in tests)
         guard let app = NSApp, app.isRunning else { return }
         let alert = NSAlert()
-        alert.messageText = "The tags of “\(url.lastPathComponent)” couldn’t be changed."
-        alert.informativeText = "You may not have permission to change this item, or its volume may be read-only."
+        alert.messageText = String(localized: "The tags of “\(url.lastPathComponent)” couldn’t be changed.")
+        alert.informativeText = String(localized: "You may not have permission to change this item, or its volume may be read-only.")
         alert.alertStyle = .warning
         if let window = app.keyWindow ?? app.mainWindow {
             alert.beginSheetModal(for: window)
@@ -6153,8 +6241,8 @@ class FileBrowserViewModel: ObservableObject {
         let archiveItems = itemsToCopy.filter(\.isFromArchive)
         let progress = Progress(totalUnitCount: Int64(archiveItems.count))
         let title = itemsToCopy.count == 1
-            ? "Copying “\(itemsToCopy[0].displayName)”"
-            : "Copying \(itemsToCopy.count) items"
+            ? String(localized: "Copying “\(itemsToCopy[0].displayName)”")
+            : String(localized: "Copying \(itemsToCopy.count) items")
         FileOperationEngine.operationDidStart(progress)
         showActivity(progress, title: title)
         let pendingWrite = FileClipboard.shared.beginDeferredWrite(progress: progress)
@@ -6212,10 +6300,10 @@ class FileBrowserViewModel: ObservableObject {
                         }
                     }
                 }
-                FileOperationAlerts.reportFailures(failures, verb: "copied", in: window)
+                FileOperationAlerts.reportFailures(failures, verb: String(localized: "copied"), in: window)
                 if !partialProblems.isEmpty {
                     FileOperationAlerts.showMessage(
-                        "Some items couldn’t be extracted. The rest were copied.",
+                        String(localized: "Some items couldn’t be extracted. The rest were copied."),
                         information: partialProblems.joined(separator: "\n"),
                         in: window
                     )
@@ -6238,7 +6326,7 @@ class FileBrowserViewModel: ObservableObject {
     nonisolated private static func extractArchiveItemForCopy(_ item: FileItem, progress: Progress?) -> ArchiveExtraction {
         guard let archiveURL = item.archiveURL,
               let archivePath = item.archivePath else {
-            let error = FileOperationEngine.makeError("It couldn’t be extracted from the archive.")
+            let error = FileOperationEngine.makeError(String(localized: "It couldn’t be extracted from the archive."))
             return .failed(FileOperationFailure(url: item.url, error: error))
         }
 
@@ -6249,7 +6337,7 @@ class FileBrowserViewModel: ObservableObject {
             return .cancelled
         } catch {
             zipNavLogger.error("Couldn't extract archive item for copy: \(error.localizedDescription)")
-            let message = "It couldn’t be extracted from “\(archiveURL.finderDisplayName)”. \(error.localizedDescription)"
+            let message = String(localized: "It couldn’t be extracted from “\(archiveURL.finderDisplayName)”. \(error.localizedDescription)")
             return .failed(FileOperationFailure(url: item.url, error: FileOperationEngine.makeError(message)))
         }
 
@@ -6260,8 +6348,10 @@ class FileBrowserViewModel: ObservableObject {
                 lines.append("…and \(result.failures.count - 5) more.")
             }
             let problem = "In “\(item.displayName)”:\n" + lines.joined(separator: "\n")
+            InstallerCleanup.noteArchiveCopy(result.url, from: archiveURL)
             return .extracted(result.url, problem: problem)
         }
+        InstallerCleanup.noteArchiveCopy(result.url, from: archiveURL)
         return .extracted(result.url, problem: nil)
     }
 
@@ -6353,12 +6443,12 @@ class FileBrowserViewModel: ObservableObject {
         // Find the item to select after deletion (next item, or previous if at end)
         let nextSelection = selectionAfterRemoving(Set(urls))
         let title = urls.count == 1
-            ? "Moving “\(FileOperationAlerts.displayName(urls[0]))” to the Trash"
-            : "Moving \(urls.count) items to the Trash"
+            ? String(localized: "Moving “\(FileOperationAlerts.displayName(urls[0]))” to the Trash")
+            : String(localized: "Moving \(urls.count) items to the Trash")
         FileOperationEngine.beginRemoving(urls)
         runFileOperation(
-            actionName: "Move to Trash",
-            failureVerb: "moved to the Trash",
+            actionName: String(localized: "Move to Trash"),
+            failureVerb: String(localized: "moved to the Trash"),
             title: title,
             window: window,
             work: { [weak self] journal, progress in
@@ -6386,6 +6476,26 @@ class FileBrowserViewModel: ObservableObject {
         }
     }
 
+    /// Moves `urls` (not the selection) to the Trash as one undoable operation.
+    func moveItemsToTrash(_ urls: [URL], window: NSWindow?) {
+        guard !urls.isEmpty else { return }
+        let title = urls.count == 1
+            ? String(localized: "Moving “\(FileOperationAlerts.displayName(urls[0]))” to the Trash")
+            : String(localized: "Moving \(urls.count) items to the Trash")
+        runFileOperation(
+            actionName: String(localized: "Move to Trash"),
+            failureVerb: String(localized: "moved to the Trash"),
+            title: title,
+            window: window,
+            work: { journal, progress in FileOperationEngine.trash(urls, journal: journal, progress: progress) }
+        ) { [weak self] journal, _ in
+            if !journal.trashedOriginals.isEmpty {
+                FinderSoundEffects.shared.play(.moveToTrash)
+            }
+            self?.refresh()
+        }
+    }
+
     /// ⌥⌘⌫: deletes the selection permanently, without the Trash, after the user confirms.
     /// Can't be undone (no undo action is registered). Never offered for volumes.
     func deleteSelectionImmediately() {
@@ -6405,9 +6515,9 @@ class FileBrowserViewModel: ObservableObject {
             NSSound.beep()
             FileOperationAlerts.showMessage(
                 volumes.count == 1 && urls.count == 1
-                    ? "“\(FileOperationAlerts.displayName(volumes[0]))” can’t be deleted because it’s a volume."
-                    : "The selected items can’t be deleted because some of them are volumes.",
-                information: "Volumes can only be ejected.",
+                    ? String(localized: "“\(FileOperationAlerts.displayName(volumes[0]))” can’t be deleted because it’s a volume.")
+                    : String(localized: "The selected items can’t be deleted because some of them are volumes."),
+                information: String(localized: "Volumes can only be ejected."),
                 in: window
             )
             return
@@ -6416,13 +6526,13 @@ class FileBrowserViewModel: ObservableObject {
         let alert = NSAlert()
         alert.alertStyle = .critical
         if urls.count == 1, let url = urls.first {
-            alert.messageText = "Are you sure you want to delete “\(FileOperationAlerts.displayName(url))” immediately?"
+            alert.messageText = String(localized: "Are you sure you want to delete “\(FileOperationAlerts.displayName(url))” immediately?")
         } else {
-            alert.messageText = "Are you sure you want to delete the \(urls.count) selected items immediately?"
+            alert.messageText = String(localized: "Are you sure you want to delete the \(urls.count) selected items immediately?")
         }
-        alert.informativeText = "You can’t undo this action."
-        alert.addButton(withTitle: "Cancel")
-        alert.addButton(withTitle: "Delete").hasDestructiveAction = true
+        alert.informativeText = String(localized: "You can’t undo this action.")
+        alert.addButton(withTitle: String(localized: "Cancel"))
+        alert.addButton(withTitle: String(localized: "Delete")).hasDestructiveAction = true
 
         FileOperationAlerts.show(alert, in: window) { [weak self] response in
             guard response == .alertSecondButtonReturn, let self else { return }
@@ -6431,7 +6541,7 @@ class FileBrowserViewModel: ObservableObject {
             FileOperationEngine.beginRemoving(urls)
             self.runFileOperation(
                 actionName: nil,
-                failureVerb: "deleted",
+                failureVerb: String(localized: "deleted"),
                 title: Self.deletingTitle(urls),
                 window: window,
                 work: { _, progress in FileOperationEngine.deleteImmediately(urls, progress: progress) }
@@ -6447,7 +6557,7 @@ class FileBrowserViewModel: ObservableObject {
     }
 
     private static func deletingTitle(_ urls: [URL]) -> String {
-        urls.count == 1 ? "Deleting “\(FileOperationAlerts.displayName(urls[0]))”" : "Deleting \(urls.count) items"
+        urls.count == 1 ? String(localized: "Deleting “\(FileOperationAlerts.displayName(urls[0]))”") : String(localized: "Deleting \(urls.count) items")
     }
 
     /// Volumes can't go to the Trash. Like Finder, offer to eject the ones that can be ejected.
@@ -6456,17 +6566,17 @@ class FileBrowserViewModel: ObservableObject {
         let alert = NSAlert()
         alert.alertStyle = .warning
         if volumes.count == 1 {
-            alert.messageText = "“\(FileOperationAlerts.displayName(volumes[0]))” is a volume and can’t be moved to the Trash."
+            alert.messageText = String(localized: "“\(FileOperationAlerts.displayName(volumes[0]))” is a volume and can’t be moved to the Trash.")
         } else {
-            alert.messageText = "\(volumes.count) of the items are volumes and can’t be moved to the Trash."
+            alert.messageText = String(localized: "\(volumes.count) of the items are volumes and can’t be moved to the Trash.")
         }
         if ejectable.isEmpty {
-            alert.informativeText = "Volumes can only be ejected."
-            alert.addButton(withTitle: "OK")
+            alert.informativeText = String(localized: "Volumes can only be ejected.")
+            alert.addButton(withTitle: String(localized: "OK"))
         } else {
-            alert.informativeText = ejectable.count == 1 ? "Do you want to eject it instead?" : "Do you want to eject them instead?"
-            alert.addButton(withTitle: "Cancel")
-            alert.addButton(withTitle: "Eject")
+            alert.informativeText = ejectable.count == 1 ? String(localized: "Do you want to eject it instead?") : String(localized: "Do you want to eject them instead?")
+            alert.addButton(withTitle: String(localized: "Cancel"))
+            alert.addButton(withTitle: String(localized: "Eject"))
         }
         FileOperationAlerts.show(alert, in: window) { response in
             guard !ejectable.isEmpty, response == .alertSecondButtonReturn else { return }
@@ -6554,20 +6664,20 @@ class FileBrowserViewModel: ObservableObject {
         let alert = NSAlert()
         alert.alertStyle = .critical
         if urls.count == 1, let url = urls.first {
-            alert.messageText = "“\(FileOperationAlerts.displayName(url))” can’t be moved to the Trash. Do you want to delete it immediately?"
+            alert.messageText = String(localized: "“\(FileOperationAlerts.displayName(url))” can’t be moved to the Trash. Do you want to delete it immediately?")
         } else {
-            alert.messageText = "\(urls.count) items can’t be moved to the Trash. Do you want to delete them immediately?"
+            alert.messageText = String(localized: "\(urls.count) items can’t be moved to the Trash. Do you want to delete them immediately?")
         }
-        alert.informativeText = "This volume doesn’t have a Trash. You can’t undo this action."
-        alert.addButton(withTitle: "Cancel")
-        alert.addButton(withTitle: "Delete Immediately").hasDestructiveAction = true
+        alert.informativeText = String(localized: "This volume doesn’t have a Trash. You can’t undo this action.")
+        alert.addButton(withTitle: String(localized: "Cancel"))
+        alert.addButton(withTitle: String(localized: "Delete Immediately")).hasDestructiveAction = true
 
         FileOperationAlerts.show(alert, in: window) { [weak self] response in
             guard response == .alertSecondButtonReturn, let self else { return }
             FileOperationEngine.beginRemoving(urls)
             self.runFileOperation(
                 actionName: nil,
-                failureVerb: "deleted",
+                failureVerb: String(localized: "deleted"),
                 title: Self.deletingTitle(urls),
                 window: window,
                 work: { _, progress in FileOperationEngine.deleteImmediately(urls, progress: progress) }
@@ -6630,7 +6740,7 @@ class FileBrowserViewModel: ObservableObject {
             guard let error else { return }
             DispatchQueue.main.async {
                 FileOperationAlerts.showMessage(
-                    "The items couldn’t be opened with “\(appName)”.",
+                    String(localized: "The items couldn’t be opened with “\(appName)”."),
                     information: error.localizedDescription,
                     in: window
                 )
@@ -6648,9 +6758,9 @@ class FileBrowserViewModel: ObservableObject {
             return
         }
         runFileOperation(
-            actionName: "Make Alias",
-            failureVerb: "made into an alias",
-            title: "Making aliases",
+            actionName: String(localized: "Make Alias"),
+            failureVerb: String(localized: "made into an alias"),
+            title: String(localized: "Making aliases"),
             window: Self.windowUnderMouse() ?? commandWindow(),
             work: { journal, _ in FileOperationEngine.makeAliases(urls, in: directory, journal: journal) }
         ) { [weak self] journal, _ in
@@ -6705,6 +6815,19 @@ class FileBrowserViewModel: ObservableObject {
         requestRename(item, to: newName, selectRenamedItem: selectRenamedItem)
     }
 
+    /// Renames several items in one step (one Undo); see `BatchRename`.
+    func renameItemsAsBatch(_ renames: [(from: URL, to: URL)]) {
+        let failures = BatchRename.perform(renames, finished: { journal, moves in
+            FileBrowserViewModel.registerUndo(reversing: journal, actionName: String(localized: "Rename"), undoManager: undoManager, viewModel: self, window: commandWindow())
+            FileClipboard.shared.itemsDidMove(journal.moves)
+            for move in moves { carryItemID(from: move.from, to: move.to) }
+            pendingSelectionURL = nil
+            pendingSelectionURLs = Set(moves.map(\.to))
+        })
+        refresh()
+        FileOperationAlerts.reportFailures(failures, verb: String(localized: "renamed"), in: commandWindow())
+    }
+
     private enum RenameOutcome {
         case unchanged
         case renamed(URL)
@@ -6741,17 +6864,17 @@ class FileBrowserViewModel: ObservableObject {
             completion?(.failed)
         }
         if let problem = FileOperationEngine.problemWithFileName(fileSystemName) {
-            refuse(problem, "Try using a name with fewer characters, or with no punctuation marks.")
+            refuse(problem, String(localized: "Try using a name with fewer characters, or with no punctuation marks."))
             return
         }
         if fileSystemName.hasPrefix("."), !source.lastPathComponent.hasPrefix(".") {
-            refuse("You can’t use a name that begins with a dot “.”, because these names are reserved for the system.",
-                   "Please choose another name.")
+            refuse(String(localized: "You can’t use a name that begins with a dot “.”, because these names are reserved for the system."),
+                   String(localized: "Please choose another name."))
             return
         }
         if FileOperationEngine.isMountPoint(source) {
-            refuse("“\(item.displayName)” can’t be renamed because it’s a volume.",
-                   "A volume keeps the name it was given when it was formatted.")
+            refuse(String(localized: "“\(item.displayName)” can’t be renamed because it’s a volume."),
+                   String(localized: "A volume keeps the name it was given when it was formatted."))
             return
         }
 
@@ -6763,15 +6886,15 @@ class FileBrowserViewModel: ObservableObject {
 
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.informativeText = "If you make this change, your document may open in a different app."
+        alert.informativeText = String(localized: "If you make this change, your document may open in a different app.")
         if change.new.isEmpty {
-            alert.messageText = "Are you sure you want to remove the extension “.\(change.old)”?"
-            alert.addButton(withTitle: "Keep")
-            alert.addButton(withTitle: "Remove")
+            alert.messageText = String(localized: "Are you sure you want to remove the extension “.\(change.old)”?")
+            alert.addButton(withTitle: String(localized: "Keep"))
+            alert.addButton(withTitle: String(localized: "Remove"))
         } else {
-            alert.messageText = "Are you sure you want to change the extension from “.\(change.old)” to “.\(change.new)”?"
-            alert.addButton(withTitle: "Keep .\(change.old)")
-            alert.addButton(withTitle: "Use .\(change.new)")
+            alert.messageText = String(localized: "Are you sure you want to change the extension from “.\(change.old)” to “.\(change.new)”?")
+            alert.addButton(withTitle: String(localized: "Keep .\(change.old)"))
+            alert.addButton(withTitle: String(localized: "Use .\(change.new)"))
         }
         FileOperationAlerts.show(alert, in: window) { [weak self] response in
             guard let self else {
@@ -6782,7 +6905,7 @@ class FileBrowserViewModel: ObservableObject {
             if finalName == source.lastPathComponent {
                 completion?(.unchanged)
             } else if let problem = FileOperationEngine.problemWithFileName(finalName) {
-                refuse(problem, "Try using a name with fewer characters, or with no punctuation marks.")
+                refuse(problem, String(localized: "Try using a name with fewer characters, or with no punctuation marks."))
             } else {
                 // (Not inside `completion?(…)`: that would skip the rename when there's no completion.)
                 let outcome = self.performRename(item, to: finalName, selectRenamedItem: selectRenamedItem, window: window)
@@ -6817,8 +6940,8 @@ class FileBrowserViewModel: ObservableObject {
         if !isCaseOnlyChange && FileOperationEngine.itemExists(at: destination) {
             NSSound.beep()
             FileOperationAlerts.showMessage(
-                "The name “\(fileSystemName.finderDisplayName)” is already taken.",
-                information: "Please choose a different name.",
+                String(localized: "The name “\(fileSystemName.finderDisplayName)” is already taken."),
+                information: String(localized: "Please choose a different name."),
                 in: window
             )
             return .failed
@@ -6827,13 +6950,13 @@ class FileBrowserViewModel: ObservableObject {
         do {
             try FileOperationEngine.renameItem(at: source, to: destination, caseOnly: isCaseOnlyChange)
         } catch {
-            FileOperationAlerts.reportFailures([FileOperationFailure(url: source, error: error)], verb: "renamed", in: window)
+            FileOperationAlerts.reportFailures([FileOperationFailure(url: source, error: error)], verb: String(localized: "renamed"), in: window)
             return .failed
         }
 
         let journal = FileOperationJournal()
         journal.steps = [.moved(from: source, to: destination)]
-        FileBrowserViewModel.registerUndo(reversing: journal, actionName: "Rename", undoManager: undoManager, viewModel: self, window: window)
+        FileBrowserViewModel.registerUndo(reversing: journal, actionName: String(localized: "Rename"), undoManager: undoManager, viewModel: self, window: window)
         FileClipboard.shared.itemDidMove(from: source, to: destination)
         carryItemID(from: source, to: destination)
         if selectRenamedItem {
@@ -6980,7 +7103,7 @@ class FileBrowserViewModel: ObservableObject {
     /// starts renaming it: in the folder shown once the listing has it; in another folder (a Column
     /// view sub-column) right away, for the view showing that folder. Returns the new folder.
     @discardableResult
-    func createNewFolder(in directory: URL) -> URL? {
+    func createNewFolder(in directory: URL, name: String = String(localized: "untitled folder"), actionName: String = String(localized: "New Folder"), create: ((URL) throws -> Void)? = nil) -> URL? {
         let isShown = isShownLocation(directory)
         guard !isInsideArchive, directory.isFileURL, !isShown || canAddItemsToCurrentLocation else {
             NSSound.beep()
@@ -6988,17 +7111,17 @@ class FileBrowserViewModel: ObservableObject {
         }
 
         let window = commandWindow()
-        let folderURL = FileOperationEngine.uniqueDestinationURL(for: directory.appendingPathComponent("untitled folder"))
+        let folderURL = FileOperationEngine.uniqueDestinationURL(for: directory.appendingPathComponent(name))
         do {
-            try FileManager.default.createDirectory(at: folderURL, withIntermediateDirectories: false)
+            if let create { try create(folderURL) } else { try FileManager.default.createDirectory(at: folderURL, withIntermediateDirectories: false) }
         } catch {
-            FileOperationAlerts.reportFailures([FileOperationFailure(url: folderURL, error: error)], verb: "created", in: window)
+            FileOperationAlerts.reportFailures([FileOperationFailure(url: folderURL, error: error)], verb: String(localized: "created"), in: window)
             return nil
         }
 
         let journal = FileOperationJournal()
         journal.steps = [.created(folderURL)]
-        FileBrowserViewModel.registerUndo(reversing: journal, actionName: "New Folder", undoManager: undoManager, viewModel: self, window: window)
+        FileBrowserViewModel.registerUndo(reversing: journal, actionName: actionName, undoManager: undoManager, viewModel: self, window: window)
         if isShown {
             pendingSelectionURL = folderURL
             pendingSelectionURLs = nil
@@ -7049,6 +7172,7 @@ class FileBrowserViewModel: ObservableObject {
     func cancelSearch() {
         spotlightSearch?.stop()
         spotlightSearch = nil
+        recursiveFilter.cancel()
         spotlightSearchToken = UUID()
         isSearching = false
     }
@@ -7065,9 +7189,11 @@ class FileBrowserViewModel: ObservableObject {
         searchDebugLogger.debug("Starting Spotlight search, \(query.count) characters")
         let token = UUID()
         spotlightSearchToken = token
+        let kindQuery = SidebarKindSearch.spotlightQuery(for: query, currentPath: currentPath)
         let session = SpotlightSearchSession(
             queryString: query,
             scope: currentPath,
+            kindQuery: kindQuery,
             idsByPath: spotlightIDsByPath,
             sortState: sortState,
             foldersFirst: AppSettings.shared.foldersFirst
@@ -7153,6 +7279,7 @@ private final class SpotlightSearchSession: @unchecked Sendable {
 
     init(queryString: String,
          scope: URL,
+         kindQuery: (predicate: NSPredicate, scopes: [URL])? = nil,
          idsByPath: [String: UUID],
          sortState: SortState,
          foldersFirst: Bool,
@@ -7161,8 +7288,8 @@ private final class SpotlightSearchSession: @unchecked Sendable {
         self.sort = (sortState, foldersFirst)
         self.deliver = deliver
         // Build predicate for filename search in the scope folder and its subfolders
-        query.predicate = NSPredicate(format: "kMDItemFSName CONTAINS[cd] %@", queryString)
-        query.searchScopes = [scope]
+        query.predicate = kindQuery?.predicate ?? NSPredicate(format: "kMDItemFSName CONTAINS[cd] %@", queryString)
+        query.searchScopes = kindQuery?.scopes ?? [scope]
         query.operationQueue = queue
         // Live updates arrive at most this often (each one re-sorts and re-renders the results)
         query.notificationBatchingInterval = 0.5

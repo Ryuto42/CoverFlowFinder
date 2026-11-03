@@ -58,13 +58,19 @@ struct FileInfoView: View {
 
                     // General Info
                     if let attrs = fileAttributes {
-                        infoSection(title: "General", items: generalInfo(attrs))
+                        infoSection(title: String(localized: "General"), items: generalInfo(attrs))
 
                         Divider()
                             .padding(.vertical, 12)
 
                         // More Info
-                        infoSection(title: "More Info", items: moreInfo(attrs))
+                        infoSection(title: String(localized: "More Info"), items: moreInfo(attrs))
+
+                        if !item.isDirectory, !item.isFromArchive, item.url.isFileURL {
+                            Divider()
+                                .padding(.vertical, 12)
+                            DefaultAppSection(fileURLs: [item.url])
+                        }
 
                         // Media Info
                         if hasMediaInfo, let media = mediaMetadata {
@@ -78,14 +84,14 @@ struct FileInfoView: View {
                                 .padding(.vertical, 12)
 
                             // Extended Attributes
-                            infoSection(title: "Extended Attributes", items: attrs.extendedAttributes.map { ($0.name, $0.value) })
+                            infoSection(title: String(localized: "Extended Attributes"), items: attrs.extendedAttributes.map { ($0.name, $0.value) })
                         }
 
                         Divider()
                             .padding(.vertical, 12)
 
                         // Permissions
-                        infoSection(title: "Permissions", items: permissionsInfo(attrs))
+                        infoSection(title: String(localized: "Permissions"), items: permissionsInfo(attrs))
                     } else if isLoadingAttributes {
                         ProgressView()
                             .padding()
@@ -128,49 +134,49 @@ struct FileInfoView: View {
     @ViewBuilder
     private func mediaInfoSections(_ media: MediaMetadata) -> some View {
         if !media.imageInfo.isEmpty {
-            infoSection(title: "Image", items: media.imageInfo)
+            infoSection(title: String(localized: "Image"), items: media.imageInfo)
             Divider()
                 .padding(.vertical, 8)
         }
 
         if !media.cameraInfo.isEmpty {
-            infoSection(title: "Camera", items: media.cameraInfo)
+            infoSection(title: String(localized: "Camera"), items: media.cameraInfo)
             Divider()
                 .padding(.vertical, 8)
         }
 
         if !media.exposureInfo.isEmpty {
-            infoSection(title: "Exposure", items: media.exposureInfo)
+            infoSection(title: String(localized: "Exposure"), items: media.exposureInfo)
             Divider()
                 .padding(.vertical, 8)
         }
 
         if !media.locationInfo.isEmpty {
-            infoSection(title: "Location", items: media.locationInfo)
+            infoSection(title: String(localized: "Location"), items: media.locationInfo)
             Divider()
                 .padding(.vertical, 8)
         }
 
         if !media.videoInfo.isEmpty {
-            infoSection(title: "Video", items: media.videoInfo)
+            infoSection(title: String(localized: "Video"), items: media.videoInfo)
             Divider()
                 .padding(.vertical, 8)
         }
 
         if !media.audioInfo.isEmpty {
-            infoSection(title: "Audio", items: media.audioInfo)
+            infoSection(title: String(localized: "Audio"), items: media.audioInfo)
             Divider()
                 .padding(.vertical, 8)
         }
 
         if !media.pdfInfo.isEmpty {
-            infoSection(title: "PDF", items: media.pdfInfo)
+            infoSection(title: String(localized: "PDF"), items: media.pdfInfo)
             Divider()
                 .padding(.vertical, 8)
         }
 
         if !media.archiveInfo.isEmpty {
-            infoSection(title: "Archive", items: media.archiveInfo)
+            infoSection(title: String(localized: "Archive"), items: media.archiveInfo)
         }
     }
 
@@ -248,21 +254,21 @@ struct FileInfoView: View {
     private func generalInfo(_ attrs: FileAttributes) -> [(String, String)] {
         var info: [(String, String)] = []
 
-        info.append(("Kind", attrs.kind))
+        info.append((String(localized: "Kind"), attrs.kind))
 
         if attrs.isDirectory {
-            let suffix = isCalculatingFolderSize ? " so far…" : ""
+            let suffix = isCalculatingFolderSize ? String(localized: " so far…") : ""
             if let totals = folderTotals {
-                info.append(("Size", FileAttributes.formatSize(logical: totals.logicalSize, allocated: totals.allocatedSize) + suffix))
-                info.append(("Contains", FileAttributes.formatItemCount(totals.itemCount) + suffix))
+                info.append((String(localized: "Size"), FileAttributes.formatSize(logical: totals.logicalSize, allocated: totals.allocatedSize) + suffix))
+                info.append((String(localized: "Contains"), FileAttributes.formatItemCount(totals.itemCount) + suffix))
             } else {
-                info.append(("Size", isCalculatingFolderSize ? "Calculating…" : "Unknown"))
+                info.append((String(localized: "Size"), isCalculatingFolderSize ? String(localized: "Calculating…") : String(localized: "Unknown")))
             }
         } else {
-            info.append(("Size", attrs.formattedSize))
+            info.append((String(localized: "Size"), attrs.formattedSize))
         }
 
-        info.append(("Location", attrs.location))
+        info.append((String(localized: "Location"), attrs.location))
 
         return info
     }
@@ -270,20 +276,20 @@ struct FileInfoView: View {
     private func moreInfo(_ attrs: FileAttributes) -> [(String, String)] {
         var info: [(String, String)] = []
 
-        info.append(("Created", attrs.formattedCreationDate))
-        info.append(("Modified", attrs.formattedModificationDate))
-        info.append(("Last Opened", attrs.formattedLastAccessDate))
+        info.append((String(localized: "Created"), attrs.formattedCreationDate))
+        info.append((String(localized: "Modified"), attrs.formattedModificationDate))
+        info.append((String(localized: "Last Opened"), attrs.formattedLastAccessDate))
 
         if let contentType = attrs.contentType {
-            info.append(("Content Type", contentType))
+            info.append((String(localized: "Content Type"), contentType))
         }
 
         if let version = attrs.version {
-            info.append(("Version", version))
+            info.append((String(localized: "Version"), version))
         }
 
         if let copyright = attrs.copyright {
-            info.append(("Copyright", copyright))
+            info.append((String(localized: "Copyright"), copyright))
         }
 
         return info
@@ -292,15 +298,15 @@ struct FileInfoView: View {
     private func permissionsInfo(_ attrs: FileAttributes) -> [(String, String)] {
         var info: [(String, String)] = []
 
-        info.append(("Owner", attrs.ownerName))
-        info.append(("Group", attrs.groupName))
-        info.append(("Permissions", attrs.permissionsString))
-        info.append(("Readable", attrs.isReadable ? "Yes" : "No"))
-        info.append(("Writable", attrs.isWritable ? "Yes" : "No"))
-        info.append(("Executable", attrs.isExecutable ? "Yes" : "No"))
+        info.append((String(localized: "Owner"), attrs.ownerName))
+        info.append((String(localized: "Group"), attrs.groupName))
+        info.append((String(localized: "Permissions"), attrs.permissionsString))
+        info.append((String(localized: "Readable"), attrs.isReadable ? String(localized: "Yes") : String(localized: "No")))
+        info.append((String(localized: "Writable"), attrs.isWritable ? String(localized: "Yes") : String(localized: "No")))
+        info.append((String(localized: "Executable"), attrs.isExecutable ? String(localized: "Yes") : String(localized: "No")))
 
         if attrs.isHidden {
-            info.append(("Hidden", "Yes"))
+            info.append((String(localized: "Hidden"), String(localized: "Yes")))
         }
 
         return info
@@ -423,7 +429,7 @@ struct FileAttributes {
         let attributes = try? fileManager.attributesOfItem(atPath: url.path)
 
         // Kind
-        self.kind = resourceValues?.localizedTypeDescription ?? "Unknown"
+        self.kind = resourceValues?.localizedTypeDescription ?? String(localized: "Unknown")
 
         // Size (a folder's size is calculated separately, in the background)
         self.isDirectory = resourceValues?.isDirectory ?? false
@@ -449,16 +455,16 @@ struct FileAttributes {
         dateFormatter.dateStyle = .long
         dateFormatter.timeStyle = .medium
 
-        self.formattedCreationDate = creationDate.map { dateFormatter.string(from: $0) } ?? "Unknown"
-        self.formattedModificationDate = modificationDate.map { dateFormatter.string(from: $0) } ?? "Unknown"
-        self.formattedLastAccessDate = lastAccessDate.map { dateFormatter.string(from: $0) } ?? "Unknown"
+        self.formattedCreationDate = creationDate.map { dateFormatter.string(from: $0) } ?? String(localized: "Unknown")
+        self.formattedModificationDate = modificationDate.map { dateFormatter.string(from: $0) } ?? String(localized: "Unknown")
+        self.formattedLastAccessDate = lastAccessDate.map { dateFormatter.string(from: $0) } ?? String(localized: "Unknown")
 
         // Content type
         self.contentType = resourceValues?.contentType?.identifier
 
         // Owner and Group
-        self.ownerName = attributes?[.ownerAccountName] as? String ?? "Unknown"
-        self.groupName = attributes?[.groupOwnerAccountName] as? String ?? "Unknown"
+        self.ownerName = attributes?[.ownerAccountName] as? String ?? String(localized: "Unknown")
+        self.groupName = attributes?[.groupOwnerAccountName] as? String ?? String(localized: "Unknown")
 
         // Permissions
         self.permissions = (attributes?[.posixPermissions] as? NSNumber)?.int16Value ?? 0
@@ -480,7 +486,7 @@ struct FileAttributes {
             }
             let data = fileManager.extendedAttribute(name, atPath: url.path) ?? Data()
             let value = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .controlCharacters)
-                ?? "\(data.count) bytes"
+                ?? String(localized: "\(data.count) bytes")
             extAttrs.append((name, value))
         }
         self.extendedAttributes = extAttrs
@@ -500,12 +506,12 @@ struct FileAttributes {
         let logicalString = ByteCountFormatter.string(fromByteCount: logical, countStyle: .file)
         guard let allocated else { return logicalString }
         let allocatedString = ByteCountFormatter.string(fromByteCount: allocated, countStyle: .file)
-        return "\(logicalString) (\(allocatedString) on disk)"
+        return String(localized: "\(logicalString) (\(allocatedString) on disk)")
     }
 
     static func formatItemCount(_ count: Int) -> String {
         let number = NumberFormatter.localizedString(from: NSNumber(value: count), number: .decimal)
-        return count == 1 ? "1 item" : "\(number) items"
+        return count == 1 ? String(localized: "1 item") : String(localized: "\(number) items")
     }
 
     private static func formatPermissions(_ permissions: Int16) -> String {
@@ -707,46 +713,46 @@ struct MediaMetadata {
 
         if let w = properties[kCGImagePropertyPixelWidth as String] as? Int {
             width = w
-            imageInfo.append(("Width", "\(w) pixels"))
+            imageInfo.append((String(localized: "Width"), String(localized: "\(w) pixels")))
         }
         if let h = properties[kCGImagePropertyPixelHeight as String] as? Int {
             height = h
-            imageInfo.append(("Height", "\(h) pixels"))
+            imageInfo.append((String(localized: "Height"), String(localized: "\(h) pixels")))
         }
 
         // Aspect ratio
         if let w = width, let h = height, w > 0, h > 0 {
             let ratio = Double(w) / Double(h)
             let aspectRatio = simplifyAspectRatio(width: w, height: h)
-            imageInfo.append(("Aspect Ratio", "\(aspectRatio) (\(String(format: "%.3f", ratio)))"))
+            imageInfo.append((String(localized: "Aspect Ratio"), String(localized: "\(aspectRatio) (\(String(format: "%.3f", ratio)))")))
         }
 
         // Check for animation (GIF, APNG)
         let frameCount = CGImageSourceGetCount(source)
         if frameCount > 1 {
-            imageInfo.append(("Animated", "Yes (\(frameCount) frames)"))
+            imageInfo.append((String(localized: "Animated"), String(localized: "Yes (\(frameCount) frames)")))
 
             // Try to get GIF duration
             if let gifProps = properties[kCGImagePropertyGIFDictionary as String] as? [String: Any],
                let loopCount = gifProps[kCGImagePropertyGIFLoopCount as String] as? Int {
-                imageInfo.append(("Loop Count", loopCount == 0 ? "Infinite" : "\(loopCount)"))
+                imageInfo.append((String(localized: "Loop Count"), loopCount == 0 ? String(localized: "Infinite") : String(localized: "\(loopCount)")))
             }
         }
 
         if let depth = properties[kCGImagePropertyDepth as String] as? Int {
-            imageInfo.append(("Bit Depth", "\(depth) bits"))
+            imageInfo.append((String(localized: "Bit Depth"), String(localized: "\(depth) bits")))
         }
         if let colorModel = properties[kCGImagePropertyColorModel as String] as? String {
-            imageInfo.append(("Color Model", colorModel))
+            imageInfo.append((String(localized: "Color Model"), colorModel))
         }
         if let profileName = properties[kCGImagePropertyProfileName as String] as? String {
-            imageInfo.append(("Color Profile", profileName))
+            imageInfo.append((String(localized: "Color Profile"), profileName))
         }
         if let dpiWidth = properties[kCGImagePropertyDPIWidth as String] as? Double {
-            imageInfo.append(("DPI", String(format: "%.0f", dpiWidth)))
+            imageInfo.append((String(localized: "DPI"), String(format: "%.0f", dpiWidth)))
         }
         if let hasAlpha = properties[kCGImagePropertyHasAlpha as String] as? Bool {
-            imageInfo.append(("Has Alpha", hasAlpha ? "Yes" : "No"))
+            imageInfo.append((String(localized: "Has Alpha"), hasAlpha ? String(localized: "Yes") : String(localized: "No")))
         }
 
         // EXIF data
@@ -773,91 +779,91 @@ struct MediaMetadata {
     private mutating func loadExifData(_ exif: [String: Any]) {
         // Camera info
         if let lensMake = exif[kCGImagePropertyExifLensMake as String] as? String {
-            cameraInfo.append(("Lens Make", lensMake))
+            cameraInfo.append((String(localized: "Lens Make"), lensMake))
         }
         if let lensModel = exif[kCGImagePropertyExifLensModel as String] as? String {
-            cameraInfo.append(("Lens Model", lensModel))
+            cameraInfo.append((String(localized: "Lens Model"), lensModel))
         }
         if let focalLength = exif[kCGImagePropertyExifFocalLength as String] as? Double,
            let formatted = MediaInfoFormatting.focalLength(focalLength) {
-            cameraInfo.append(("Focal Length", formatted))
+            cameraInfo.append((String(localized: "Focal Length"), formatted))
         }
         if let focalLength35mm = exif[kCGImagePropertyExifFocalLenIn35mmFilm as String] as? Int,
            let formatted = MediaInfoFormatting.focalLength35mm(focalLength35mm) {
-            cameraInfo.append(("35mm Equivalent", formatted))
+            cameraInfo.append((String(localized: "35mm Equivalent"), formatted))
         }
 
         // Exposure info
         if let exposureTime = exif[kCGImagePropertyExifExposureTime as String] as? Double,
            let shutterSpeed = MediaInfoFormatting.shutterSpeed(exposureTime) {
-            exposureInfo.append(("Shutter Speed", shutterSpeed))
+            exposureInfo.append((String(localized: "Shutter Speed"), shutterSpeed))
         }
         if let fNumber = exif[kCGImagePropertyExifFNumber as String] as? Double,
            let aperture = MediaInfoFormatting.aperture(fNumber) {
-            exposureInfo.append(("Aperture", aperture))
+            exposureInfo.append((String(localized: "Aperture"), aperture))
         }
         if let iso = exif[kCGImagePropertyExifISOSpeedRatings as String] as? [Int],
            let isoValue = iso.first, let formatted = MediaInfoFormatting.iso(isoValue) {
-            exposureInfo.append(("ISO", formatted))
+            exposureInfo.append((String(localized: "ISO"), formatted))
         }
         if let exposureBias = exif[kCGImagePropertyExifExposureBiasValue as String] as? Double {
-            exposureInfo.append(("Exposure Bias", String(format: "%.1f EV", exposureBias)))
+            exposureInfo.append((String(localized: "Exposure Bias"), String(format: "%.1f EV", exposureBias)))
         }
         if let exposureMode = exif[kCGImagePropertyExifExposureMode as String] as? Int {
-            let modeNames = [0: "Auto", 1: "Manual", 2: "Auto Bracket"]
-            exposureInfo.append(("Exposure Mode", modeNames[exposureMode] ?? "Unknown"))
+            let modeNames = [0: String(localized: "Auto"), 1: String(localized: "Manual"), 2: String(localized: "Auto Bracket")]
+            exposureInfo.append((String(localized: "Exposure Mode"), modeNames[exposureMode] ?? String(localized: "Unknown")))
         }
         if let exposureProgram = exif[kCGImagePropertyExifExposureProgram as String] as? Int {
             let programNames = [
-                0: "Unknown", 1: "Manual", 2: "Program AE", 3: "Aperture Priority",
-                4: "Shutter Priority", 5: "Creative", 6: "Action", 7: "Portrait", 8: "Landscape"
+                0: String(localized: "Unknown"), 1: String(localized: "Manual"), 2: String(localized: "Program AE"), 3: String(localized: "Aperture Priority"),
+                4: String(localized: "Shutter Priority"), 5: String(localized: "Creative"), 6: String(localized: "Action"), 7: String(localized: "Portrait"), 8: String(localized: "Landscape")
             ]
-            exposureInfo.append(("Exposure Program", programNames[exposureProgram] ?? "Unknown"))
+            exposureInfo.append((String(localized: "Exposure Program"), programNames[exposureProgram] ?? String(localized: "Unknown")))
         }
         if let meteringMode = exif[kCGImagePropertyExifMeteringMode as String] as? Int {
             let modeNames = [
-                0: "Unknown", 1: "Average", 2: "Center-weighted", 3: "Spot",
-                4: "Multi-spot", 5: "Pattern", 6: "Partial"
+                0: String(localized: "Unknown"), 1: String(localized: "Average"), 2: String(localized: "Center-weighted"), 3: String(localized: "Spot"),
+                4: String(localized: "Multi-spot"), 5: String(localized: "Pattern"), 6: String(localized: "Partial")
             ]
-            exposureInfo.append(("Metering Mode", modeNames[meteringMode] ?? "Unknown"))
+            exposureInfo.append((String(localized: "Metering Mode"), modeNames[meteringMode] ?? String(localized: "Unknown")))
         }
         if let whiteBalance = exif[kCGImagePropertyExifWhiteBalance as String] as? Int {
-            exposureInfo.append(("White Balance", whiteBalance == 0 ? "Auto" : "Manual"))
+            exposureInfo.append((String(localized: "White Balance"), whiteBalance == 0 ? String(localized: "Auto") : String(localized: "Manual")))
         }
         if let flash = exif[kCGImagePropertyExifFlash as String] as? Int {
             let flashFired = (flash & 1) != 0
-            exposureInfo.append(("Flash", flashFired ? "Fired" : "Did not fire"))
+            exposureInfo.append((String(localized: "Flash"), flashFired ? String(localized: "Fired") : String(localized: "Did not fire")))
         }
         if let brightnessValue = exif[kCGImagePropertyExifBrightnessValue as String] as? Double {
-            exposureInfo.append(("Brightness", String(format: "%.2f", brightnessValue)))
+            exposureInfo.append((String(localized: "Brightness"), String(format: "%.2f", brightnessValue)))
         }
 
         // Date
         if let dateOriginal = exif[kCGImagePropertyExifDateTimeOriginal as String] as? String {
-            imageInfo.insert(("Date Taken", formatExifDate(dateOriginal)), at: 0)
+            imageInfo.insert((String(localized: "Date Taken"), formatExifDate(dateOriginal)), at: 0)
         }
 
         // Software
         if let software = exif[kCGImagePropertyExifUserComment as String] as? String {
-            imageInfo.append(("Comment", software))
+            imageInfo.append((String(localized: "Comment"), software))
         }
     }
 
     private mutating func loadTiffData(_ tiff: [String: Any]) {
         if let make = tiff[kCGImagePropertyTIFFMake as String] as? String {
-            cameraInfo.insert(("Make", make), at: 0)
+            cameraInfo.insert((String(localized: "Make"), make), at: 0)
         }
         if let model = tiff[kCGImagePropertyTIFFModel as String] as? String {
-            cameraInfo.insert(("Model", model), at: min(1, cameraInfo.count))
+            cameraInfo.insert((String(localized: "Model"), model), at: min(1, cameraInfo.count))
         }
         if let software = tiff[kCGImagePropertyTIFFSoftware as String] as? String {
-            cameraInfo.append(("Software", software))
+            cameraInfo.append((String(localized: "Software"), software))
         }
         if let artist = tiff[kCGImagePropertyTIFFArtist as String] as? String {
-            imageInfo.append(("Artist", artist))
+            imageInfo.append((String(localized: "Artist"), artist))
         }
         if let copyright = tiff[kCGImagePropertyTIFFCopyright as String] as? String {
-            imageInfo.append(("Copyright", copyright))
+            imageInfo.append((String(localized: "Copyright"), copyright))
         }
     }
 
@@ -891,53 +897,53 @@ struct MediaMetadata {
             let latDir = finalLat >= 0 ? "N" : "S"
             let lonDir = finalLon >= 0 ? "E" : "W"
 
-            locationInfo.append(("Coordinates", String(format: "%.6f°%@, %.6f°%@",
+            locationInfo.append((String(localized: "Coordinates"), String(format: "%.6f°%@, %.6f°%@",
                 abs(finalLat), latDir, abs(finalLon), lonDir)))
 
             // DMS format
             if let latDMS = MediaInfoFormatting.degreesMinutesSeconds(abs(finalLat)),
                let lonDMS = MediaInfoFormatting.degreesMinutesSeconds(abs(finalLon)) {
-                locationInfo.append(("Position", "\(latDMS)\(latDir) \(lonDMS)\(lonDir)"))
+                locationInfo.append((String(localized: "Position"), String(localized: "\(latDMS)\(latDir) \(lonDMS)\(lonDir)")))
             }
         }
 
         if let altitude = gps[kCGImagePropertyGPSAltitude as String] as? Double {
             let altRef = gps[kCGImagePropertyGPSAltitudeRef as String] as? Int ?? 0
             let altSign = altRef == 1 ? -1.0 : 1.0
-            locationInfo.append(("Altitude", String(format: "%.1f m", altitude * altSign)))
+            locationInfo.append((String(localized: "Altitude"), String(format: "%.1f m", altitude * altSign)))
         }
 
         if let speed = gps[kCGImagePropertyGPSSpeed as String] as? Double, speed.isFinite, speed >= 0 {
             let speedRef = gps[kCGImagePropertyGPSSpeedRef as String] as? String ?? "K"
             let unit = speedRef == "M" ? "mph" : (speedRef == "N" ? "knots" : "km/h")
-            locationInfo.append(("Speed", String(format: "%.1f %@", speed, unit)))
+            locationInfo.append((String(localized: "Speed"), String(format: "%.1f %@", speed, unit)))
         }
 
         if let imgDirection = gps[kCGImagePropertyGPSImgDirection as String] as? Double,
            let direction = MediaInfoFormatting.direction(imgDirection) {
-            locationInfo.append(("Direction", direction))
+            locationInfo.append((String(localized: "Direction"), direction))
         }
 
         if let timestamp = gps[kCGImagePropertyGPSTimeStamp as String] as? String {
-            locationInfo.append(("GPS Time", timestamp))
+            locationInfo.append((String(localized: "GPS Time"), timestamp))
         }
         if let datestamp = gps[kCGImagePropertyGPSDateStamp as String] as? String {
-            locationInfo.append(("GPS Date", datestamp))
+            locationInfo.append((String(localized: "GPS Date"), datestamp))
         }
     }
 
     private mutating func loadIptcData(_ iptc: [String: Any]) {
         if let caption = iptc[kCGImagePropertyIPTCCaptionAbstract as String] as? String {
-            imageInfo.append(("Caption", caption))
+            imageInfo.append((String(localized: "Caption"), caption))
         }
         if let keywords = iptc[kCGImagePropertyIPTCKeywords as String] as? [String] {
-            imageInfo.append(("Keywords", keywords.joined(separator: ", ")))
+            imageInfo.append((String(localized: "Keywords"), keywords.joined(separator: ", ")))
         }
         if let city = iptc[kCGImagePropertyIPTCCity as String] as? String {
-            locationInfo.append(("City", city))
+            locationInfo.append((String(localized: "City"), city))
         }
         if let country = iptc[kCGImagePropertyIPTCCountryPrimaryLocationName as String] as? String {
-            locationInfo.append(("Country", country))
+            locationInfo.append((String(localized: "Country"), country))
         }
     }
 
@@ -947,7 +953,7 @@ struct MediaMetadata {
         // Duration
         if let duration = try? await asset.load(.duration),
            let formatted = MediaInfoFormatting.duration(duration.seconds) {
-            videoInfo.append(("Duration", formatted))
+            videoInfo.append((String(localized: "Duration"), formatted))
         }
 
         // Video track info
@@ -960,17 +966,17 @@ struct MediaMetadata {
                 let isPortrait = transform.a == 0 && abs(transform.b) == 1
                 let width = abs(isPortrait ? naturalHeight : naturalWidth)
                 let height = abs(isPortrait ? naturalWidth : naturalHeight)
-                videoInfo.append(("Resolution", "\(width) × \(height)"))
+                videoInfo.append((String(localized: "Resolution"), String(localized: "\(width) × \(height)")))
             }
 
             let frameRate = (try? await videoTrack.load(.nominalFrameRate)) ?? 0
             if frameRate > 0 {
-                videoInfo.append(("Frame Rate", String(format: "%.2f fps", frameRate)))
+                videoInfo.append((String(localized: "Frame Rate"), String(format: "%.2f fps", frameRate)))
             }
 
             let bitRate = (try? await videoTrack.load(.estimatedDataRate)) ?? 0
             if bitRate > 0 {
-                videoInfo.append(("Video Bitrate", formatBitrate(bitRate)))
+                videoInfo.append((String(localized: "Video Bitrate"), formatBitrate(bitRate)))
             }
 
             // Codec
@@ -978,7 +984,7 @@ struct MediaMetadata {
                let formatDesc = formatDescriptions.first {
                 let codec = CMFormatDescriptionGetMediaSubType(formatDesc)
                 let codecString = fourCharCodeToString(codec)
-                videoInfo.append(("Video Codec", codecString))
+                videoInfo.append((String(localized: "Video Codec"), codecString))
             }
         }
 
@@ -988,24 +994,24 @@ struct MediaMetadata {
                let formatDesc = formatDescriptions.first {
                 if let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDesc) {
                     if let sampleRate = MediaInfoFormatting.sampleRate(asbd.pointee.mSampleRate) {
-                        audioInfo.append(("Sample Rate", sampleRate))
+                        audioInfo.append((String(localized: "Sample Rate"), sampleRate))
                     }
 
                     let channels = asbd.pointee.mChannelsPerFrame
                     if channels > 0 {
-                        let channelString = channels == 1 ? "Mono" : (channels == 2 ? "Stereo" : "\(channels) channels")
-                        audioInfo.append(("Channels", channelString))
+                        let channelString = channels == 1 ? String(localized: "Mono") : (channels == 2 ? String(localized: "Stereo") : String(localized: "\(channels) channels"))
+                        audioInfo.append((String(localized: "Channels"), channelString))
                     }
                 }
 
                 let codec = CMFormatDescriptionGetMediaSubType(formatDesc)
                 let codecString = fourCharCodeToString(codec)
-                audioInfo.append(("Audio Codec", codecString))
+                audioInfo.append((String(localized: "Audio Codec"), codecString))
             }
 
             let bitRate = (try? await audioTrack.load(.estimatedDataRate)) ?? 0
             if bitRate > 0 {
-                audioInfo.append(("Audio Bitrate", formatBitrate(bitRate)))
+                audioInfo.append((String(localized: "Audio Bitrate"), formatBitrate(bitRate)))
             }
         }
 
@@ -1019,7 +1025,7 @@ struct MediaMetadata {
         // Duration
         if let duration = try? await asset.load(.duration),
            let formatted = MediaInfoFormatting.duration(duration.seconds) {
-            audioInfo.append(("Duration", formatted))
+            audioInfo.append((String(localized: "Duration"), formatted))
         }
 
         // Audio track info
@@ -1028,29 +1034,29 @@ struct MediaMetadata {
                let formatDesc = formatDescriptions.first {
                 if let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDesc) {
                     if let sampleRate = MediaInfoFormatting.sampleRate(asbd.pointee.mSampleRate) {
-                        audioInfo.append(("Sample Rate", sampleRate))
+                        audioInfo.append((String(localized: "Sample Rate"), sampleRate))
                     }
 
                     let channels = asbd.pointee.mChannelsPerFrame
                     if channels > 0 {
-                        let channelString = channels == 1 ? "Mono" : (channels == 2 ? "Stereo" : "\(channels) channels")
-                        audioInfo.append(("Channels", channelString))
+                        let channelString = channels == 1 ? String(localized: "Mono") : (channels == 2 ? String(localized: "Stereo") : String(localized: "\(channels) channels"))
+                        audioInfo.append((String(localized: "Channels"), channelString))
                     }
 
                     let bitsPerChannel = asbd.pointee.mBitsPerChannel
                     if bitsPerChannel > 0 {
-                        audioInfo.append(("Bit Depth", "\(bitsPerChannel) bits"))
+                        audioInfo.append((String(localized: "Bit Depth"), String(localized: "\(bitsPerChannel) bits")))
                     }
                 }
 
                 let codec = CMFormatDescriptionGetMediaSubType(formatDesc)
                 let codecString = fourCharCodeToString(codec)
-                audioInfo.append(("Codec", codecString))
+                audioInfo.append((String(localized: "Codec"), codecString))
             }
 
             let bitRate = (try? await audioTrack.load(.estimatedDataRate)) ?? 0
             if bitRate > 0 {
-                audioInfo.append(("Bitrate", formatBitrate(bitRate)))
+                audioInfo.append((String(localized: "Bitrate"), formatBitrate(bitRate)))
             }
         }
 
@@ -1067,21 +1073,21 @@ struct MediaMetadata {
 
             switch key {
             case "title", AVMetadataKey.commonKeyTitle.rawValue:
-                audioInfo.insert(("Title", value), at: 0)
+                audioInfo.insert((String(localized: "Title"), value), at: 0)
             case "artist", AVMetadataKey.commonKeyArtist.rawValue:
-                audioInfo.append(("Artist", value))
+                audioInfo.append((String(localized: "Artist"), value))
             case "albumName", AVMetadataKey.commonKeyAlbumName.rawValue:
-                audioInfo.append(("Album", value))
+                audioInfo.append((String(localized: "Album"), value))
             case "creationDate", AVMetadataKey.commonKeyCreationDate.rawValue:
-                videoInfo.insert(("Created", value), at: 0)
+                videoInfo.insert((String(localized: "Created"), value), at: 0)
             case "make", AVMetadataKey.commonKeyMake.rawValue:
-                cameraInfo.append(("Make", value))
+                cameraInfo.append((String(localized: "Make"), value))
             case "model", AVMetadataKey.commonKeyModel.rawValue:
-                cameraInfo.append(("Model", value))
+                cameraInfo.append((String(localized: "Model"), value))
             case "software", AVMetadataKey.commonKeySoftware.rawValue:
-                cameraInfo.append(("Software", value))
+                cameraInfo.append((String(localized: "Software"), value))
             case "location", AVMetadataKey.commonKeyLocation.rawValue:
-                locationInfo.append(("Location", value))
+                locationInfo.append((String(localized: "Location"), value))
             default:
                 break
             }
@@ -1094,44 +1100,44 @@ struct MediaMetadata {
 
         // Page count
         let pageCount = pdfDoc.numberOfPages
-        pdfInfo.append(("Pages", "\(pageCount)"))
+        pdfInfo.append((String(localized: "Pages"), String(localized: "\(pageCount)")))
 
         // Get first page dimensions
         if let page = pdfDoc.page(at: 1) {
             let mediaBox = page.getBoxRect(.mediaBox)
             if let width = MediaInfoFormatting.integer(Double(mediaBox.width)),
                let height = MediaInfoFormatting.integer(Double(mediaBox.height)) {
-                pdfInfo.append(("Page Size", "\(width) × \(height) pts"))
+                pdfInfo.append((String(localized: "Page Size"), String(localized: "\(width) × \(height) pts")))
             }
 
             // Convert to inches (72 pts per inch)
             let widthInches = mediaBox.width / 72.0
             let heightInches = mediaBox.height / 72.0
-            pdfInfo.append(("Dimensions", String(format: "%.2f × %.2f in", widthInches, heightInches)))
+            pdfInfo.append((String(localized: "Dimensions"), String(format: "%.2f × %.2f in", widthInches, heightInches)))
         }
 
         // PDF metadata from info dictionary
         if let info = pdfDoc.info {
             if let title = getStringFromPDFDict(info, key: "Title") {
-                pdfInfo.append(("Title", title))
+                pdfInfo.append((String(localized: "Title"), title))
             }
             if let author = getStringFromPDFDict(info, key: "Author") {
-                pdfInfo.append(("Author", author))
+                pdfInfo.append((String(localized: "Author"), author))
             }
             if let subject = getStringFromPDFDict(info, key: "Subject") {
-                pdfInfo.append(("Subject", subject))
+                pdfInfo.append((String(localized: "Subject"), subject))
             }
             if let creator = getStringFromPDFDict(info, key: "Creator") {
-                pdfInfo.append(("Creator", creator))
+                pdfInfo.append((String(localized: "Creator"), creator))
             }
             if let producer = getStringFromPDFDict(info, key: "Producer") {
-                pdfInfo.append(("Producer", producer))
+                pdfInfo.append((String(localized: "Producer"), producer))
             }
             if let creationDate = getStringFromPDFDict(info, key: "CreationDate") {
-                pdfInfo.append(("Created", formatPDFDate(creationDate)))
+                pdfInfo.append((String(localized: "Created"), formatPDFDate(creationDate)))
             }
             if let modDate = getStringFromPDFDict(info, key: "ModDate") {
-                pdfInfo.append(("Modified", formatPDFDate(modDate)))
+                pdfInfo.append((String(localized: "Modified"), formatPDFDate(modDate)))
             }
         }
 
@@ -1139,20 +1145,20 @@ struct MediaMetadata {
         var majorVersion: Int32 = 0
         var minorVersion: Int32 = 0
         pdfDoc.getVersion(majorVersion: &majorVersion, minorVersion: &minorVersion)
-        pdfInfo.append(("PDF Version", "\(majorVersion).\(minorVersion)"))
+        pdfInfo.append((String(localized: "PDF Version"), String(localized: "\(majorVersion).\(minorVersion)")))
 
         // Encryption status
         if pdfDoc.isEncrypted {
-            pdfInfo.append(("Encrypted", "Yes"))
-            pdfInfo.append(("Unlocked", pdfDoc.isUnlocked ? "Yes" : "No"))
+            pdfInfo.append((String(localized: "Encrypted"), String(localized: "Yes")))
+            pdfInfo.append((String(localized: "Unlocked"), pdfDoc.isUnlocked ? String(localized: "Yes") : String(localized: "No")))
         }
 
         // Check permissions
         if pdfDoc.allowsCopying {
-            pdfInfo.append(("Allows Copying", "Yes"))
+            pdfInfo.append((String(localized: "Allows Copying"), String(localized: "Yes")))
         }
         if pdfDoc.allowsPrinting {
-            pdfInfo.append(("Allows Printing", "Yes"))
+            pdfInfo.append((String(localized: "Allows Printing"), String(localized: "Yes")))
         }
     }
 
@@ -1173,7 +1179,7 @@ struct MediaMetadata {
             loadZipMetadata(from: url)
         } else {
             // For other archives, just show basic info
-            archiveInfo.append(("Format", ext.uppercased()))
+            archiveInfo.append((String(localized: "Format"), ext.uppercased()))
         }
     }
 
@@ -1213,13 +1219,13 @@ struct MediaMetadata {
                                 (UInt32(searchData[offset + 14]) << 16) |
                                 (UInt32(searchData[offset + 15]) << 24)
 
-            archiveInfo.append(("Format", "ZIP"))
-            archiveInfo.append(("Files", "\(totalEntries)"))
+            archiveInfo.append((String(localized: "Format"), String(localized: "ZIP")))
+            archiveInfo.append((String(localized: "Files"), String(localized: "\(totalEntries)")))
 
             // Estimate compression ratio
             if centralDirSize > 0 {
                 let compressedSize = fileSize
-                archiveInfo.append(("Archive Size", formatFileSize(Int64(compressedSize))))
+                archiveInfo.append((String(localized: "Archive Size"), formatFileSize(Int64(compressedSize))))
             }
         }
     }

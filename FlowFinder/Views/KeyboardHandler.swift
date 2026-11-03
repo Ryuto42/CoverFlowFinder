@@ -95,6 +95,7 @@ enum FileAreaKeyCommand: Equatable {
     case typeAhead(Character)
     case cancelTypeAhead
     case closeQuickLook
+    case goBack
 }
 
 /// Everything the routing decision depends on, captured from a key event and its window.
@@ -108,6 +109,7 @@ struct KeyRoutingContext {
     var responder: KeyboardResponderKind
     var isTypeAheadActive: Bool
     var isQuickLookVisible: Bool = false
+    var backspaceGoesBack: Bool = false
 }
 
 enum KeyboardRouting {
@@ -116,6 +118,7 @@ enum KeyboardRouting {
         static let returnKey: UInt16 = 36
         static let space: UInt16 = 49
         static let escape: UInt16 = 53
+        static let delete: UInt16 = 51
         static let keypadEnter: UInt16 = 76
         static let leftArrow: UInt16 = 123
         static let rightArrow: UInt16 = 124
@@ -177,6 +180,9 @@ enum KeyboardRouting {
             // Only swallow Escape when it has something to cancel; otherwise sheets, Quick Look
             // and .onExitCommand handlers must see it.
             return (context.isTypeAheadActive && !command && !option && !control) ? .cancelTypeAhead : nil
+        case KeyCode.delete:
+            let plain = !command && !option && !control && !shift
+            return (plain && context.backspaceGoesBack && !context.isTypeAheadActive) ? .goBack : nil
         default:
             break
         }
@@ -330,6 +336,7 @@ final class KeyboardManager {
             self?.noteMouseDown(event)
             return event
         }
+        SwipeNavigator.shared.install()
     }
 
     // MARK: Focus engagement
@@ -514,12 +521,16 @@ final class KeyboardManager {
             isModalSessionActive: NSApp.modalWindow != nil,
             responder: effectiveResponderKind(in: window),
             isTypeAheadActive: isTypeAheadActive(in: window),
-            isQuickLookVisible: QuickLookControllerView.isPanelVisible
+            isQuickLookVisible: QuickLookControllerView.isPanelVisible,
+            backspaceGoesBack: AppSettings.shared.backspaceGoesBack
         )
         guard let command = KeyboardRouting.command(for: context) else { return false }
         // Closing Quick Look needs no file view (Cover Flow handles its own keys)
         if command == .closeQuickLook {
             return perform(command, with: KeyboardHandlers(), in: window)
+        }
+        if command == .goBack {
+            return SwipeNavigator.goBackFromKeyboard(in: window)
         }
         guard let handlers = activeHandlers(for: window) else { return false }
         return perform(command, with: handlers, in: window)
@@ -542,6 +553,8 @@ final class KeyboardManager {
         case .closeQuickLook:
             clearTypeAhead()
             QuickLookControllerView.shared.hidePreview()
+        case .goBack:
+            return SwipeNavigator.goBackFromKeyboard(in: window)
         }
         return true
     }
@@ -698,11 +711,12 @@ enum BrowserWindowCommand {
 }
 
 /// View ▸ as …: ⌘1–⌘4 are Finder's (Icons, List, Columns, Gallery — here Cover Flow); the layouts
-/// Finder doesn't have follow on ⌘5–⌘7.
+/// Finder doesn't have follow on ⌘5–⌘6.
 enum ViewModeShortcuts {
     static let menuOrder: [ViewMode] = {
-        let finderOrder: [ViewMode] = [.icons, .list, .columns, .coverFlow, .masonry, .dualPane, .quadPane]
-        return finderOrder + ViewMode.allCases.filter { !finderOrder.contains($0) }
+        // Dual Pane is superseded by split tabs.
+        let finderOrder: [ViewMode] = [.icons, .list, .columns, .coverFlow, .masonry, .quadPane]
+        return finderOrder + ViewMode.allCases.filter { !finderOrder.contains($0) && $0 != .dualPane }
     }()
 
     /// The digit of `mode`'s ⌘-shortcut (nil past ⌘9).
@@ -725,6 +739,8 @@ final class BrowserCommandContext: ObservableObject {
     @Published private(set) var canPaste = false
     /// Tabs in the window (⌘W closes the window when there is one).
     @Published private(set) var tabCount = 1
+    /// The current tab shows two panes (Copy/Move to Other Pane).
+    @Published private(set) var isSplitTab = false
 
     /// What `canPaste` was computed from: the pasteboard is read again only when this changes.
     private struct PasteInputs: Equatable {
@@ -769,6 +785,10 @@ final class BrowserCommandContext: ObservableObject {
 
     func setTabCount(_ count: Int) {
         if tabCount != count { tabCount = count }
+    }
+
+    func setSplitTab(_ isSplit: Bool) {
+        if isSplitTab != isSplit { isSplitTab = isSplit }
     }
 
     private func scheduleUpdate() {
@@ -974,11 +994,12 @@ private struct KeyboardHandlerProbe: NSViewRepresentable {
 }
 
 struct KeyboardNavigable: ViewModifier {
+    @Environment(\.isFocusedSplitPane) private var isFocusedSplitPane
     let isActive: Bool
     let handlers: KeyboardHandlers
 
     func body(content: Content) -> some View {
-        content.background(KeyboardHandlerProbe(isActive: isActive, handlers: handlers))
+        content.background(KeyboardHandlerProbe(isActive: isActive && isFocusedSplitPane, handlers: handlers))
     }
 }
 
@@ -1506,6 +1527,6 @@ extension URL {
     /// The last path component as Finder shows it (":" on disk is displayed as "/"). For display
     /// only; paths keep the on-disk name.
     var finderDisplayName: String {
-        lastPathComponent.finderDisplayName
+        localizedFolderName ?? lastPathComponent.finderDisplayName
     }
 }

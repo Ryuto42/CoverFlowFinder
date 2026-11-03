@@ -49,6 +49,11 @@ struct FileTableView: NSViewRepresentable {
 final class KeyboardTableView: NSTableView {
     weak var coordinator: FileTableCoordinator?
 
+    override func drawBackground(inClipRect clipRect: NSRect) {
+        if UI.Colors.drawTranslucentStripes(in: self, clipRect: clipRect) { return }
+        super.drawBackground(inClipRect: clipRect)
+    }
+
     override var acceptsFirstResponder: Bool {
         // Don't take focus away from the inline rename field while it's editing
         if coordinator?.isCurrentlyEditing == true {
@@ -69,6 +74,11 @@ final class KeyboardTableView: NSTableView {
             scrollView.contentView.autoscroll(with: event)
         }
         return super.draggingUpdated(sender)
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        SpringLoader.shared.cancel(owner: self)
+        super.draggingExited(sender)
     }
 
     override func keyDown(with event: NSEvent) {
@@ -93,6 +103,12 @@ final class KeyboardTableView: NSTableView {
 
     /// Identity of the last mouse-down handled, to drop a re-delivery of the same click.
     private var lastMouseDown: (timestamp: TimeInterval, eventNumber: Int, clickCount: Int)?
+
+    override func otherMouseDown(with event: NSEvent) {
+        let clickedRow = row(at: convert(event.locationInWindow, from: nil))
+        if event.buttonNumber == 2, clickedRow >= 0, let coordinator, coordinator.openRowInNewTab(clickedRow) { return }
+        super.otherMouseDown(with: event)
+    }
 
     override func mouseDown(with event: NSEvent) {
         // AppKit's gesture-recognizer machinery can deliver the same mouse-down a second time
@@ -132,13 +148,16 @@ final class KeyboardTableView: NSTableView {
             if modifiers.contains(.command) || modifiers.contains(.shift) {
                 // ⌘/⇧-click on empty space keeps the selection (Finder)
                 window?.makeFirstResponder(self)
+                trackMarqueeSelection(from: event)
                 return
             }
             coordinator?.handleEmptySpaceClick()
-            // Let NSTableView track the mouse so a drag-select can start from empty space
-            coordinator?.beginMouseSelection(row: -1)
-            super.mouseDown(with: event)
-            coordinator?.endMouseSelection()
+            window?.makeFirstResponder(self)
+            trackMarqueeSelection(from: event)
+            return
+        }
+
+        if event.clickCount == 1, marqueeCanStart(at: point, row: clickedRow), trackMarqueeSelection(from: event) {
             return
         }
 
@@ -197,10 +216,10 @@ enum FileListActions {
 
         if external.count > openConfirmationThreshold {
             let alert = NSAlert()
-            alert.messageText = "Are you sure you want to open \(external.count) items?"
-            alert.informativeText = "Each item opens in its own application window."
-            alert.addButton(withTitle: "Open")
-            alert.addButton(withTitle: "Cancel")
+            alert.messageText = String(localized: "Are you sure you want to open \(external.count) items?")
+            alert.informativeText = String(localized: "Each item opens in its own application window.")
+            alert.addButton(withTitle: String(localized: "Open"))
+            alert.addButton(withTitle: String(localized: "Cancel"))
             guard alert.runModal() == .alertFirstButtonReturn else { return }
         }
 
@@ -492,6 +511,8 @@ final class FileTableCoordinator: NSObject, NSTableViewDataSource, NSTableViewDe
 
         // Observe focus file list notification (e.g., after Escape from search)
         NotificationCenter.default.addObserver(self, selector: #selector(handleFocusFileList(_:)), name: .focusFileList, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(applyBackground), name: UI.Colors.translucencyChanged, object: nil)
+        applyBackground()
 
         // Setup menus after a short delay to ensure view hierarchy is ready
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
@@ -743,17 +764,16 @@ final class FileTableCoordinator: NSObject, NSTableViewDataSource, NSTableViewDe
         var rows = rows.filteredIndexSet { $0 < items.count }
         let allColumns = IndexSet(integersIn: 0..<tableView.numberOfColumns)
 
+        // Reloading any column of the editing row makes AppKit end the edit, so it waits for the edit to end
         if let editingRow = editingRow, rows.contains(editingRow) {
             rows.remove(editingRow)
-            var otherColumns = allColumns
-            otherColumns.remove(nameColumnIndex(in: tableView))
-            if !otherColumns.isEmpty {
-                tableView.reloadData(forRowIndexes: IndexSet(integer: editingRow), columnIndexes: otherColumns)
-            }
+            rowAwaitingEditEnd = currentEditingCell?.representedURL
         }
         guard !rows.isEmpty else { return }
         tableView.reloadData(forRowIndexes: rows, columnIndexes: allColumns)
     }
+
+    private var rowAwaitingEditEnd: URL?
 
     private var editingRow: Int? {
         guard isCurrentlyEditing, let url = currentEditingCell?.representedURL else { return nil }
@@ -930,9 +950,15 @@ final class FileTableCoordinator: NSObject, NSTableViewDataSource, NSTableViewDe
     private func editingDidEnd() {
         currentEditingCell = nil
         lastProcessedRenamingURL = nil
+        let awaitingURL = rowAwaitingEditEnd
+        rowAwaitingEditEnd = nil
         // Not synchronously: this runs inside the text field's end-editing callback
         DispatchQueue.main.async { [weak self] in
-            guard let self, !self.isCurrentlyEditing, let deferred = self.deferredItems else { return }
+            guard let self, !self.isCurrentlyEditing else { return }
+            if let awaitingURL, let row = self.rowIndex[awaitingURL] {
+                self.reloadRows(IndexSet(integer: row))
+            }
+            guard let deferred = self.deferredItems else { return }
             self.deferredItems = nil
             self.applyItems(self.resolveFreshContent(deferred))
             self.syncSelectionFromViewModel()
@@ -1115,9 +1141,9 @@ final class FileTableCoordinator: NSObject, NSTableViewDataSource, NSTableViewDe
         // Get the cell rect for this row/column
         let cellRect = tableView.frameOfCell(atColumn: clickedColumn, row: row)
 
-        // Icon area: 4pt leading padding + icon size + 6pt trailing padding
+        // Icon area: leading padding + icon size + 6pt trailing padding
         let iconSize = appSettings.listIconSizeValue
-        let iconAreaWidth: CGFloat = 4 + iconSize + 6
+        let iconAreaWidth: CGFloat = FileNameCellView.iconLeadingInset + iconSize + 6
 
         // Check if click was past the icon area (on the text portion)
         let clickXInCell = point.x - cellRect.minX
@@ -1132,7 +1158,7 @@ final class FileTableCoordinator: NSObject, NSTableViewDataSource, NSTableViewDe
 
     private func makeTableColumn(for settings: ColumnSettings) -> NSTableColumn {
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(settings.column.rawValue))
-        column.title = settings.column.rawValue
+        column.title = settings.column.localizedName
         column.width = settings.width
         // No maximum width (AppKit's default): any width; the list scrolls horizontally
         column.minWidth = settings.column.minWidth
@@ -1378,7 +1404,7 @@ final class FileTableCoordinator: NSObject, NSTableViewDataSource, NSTableViewDe
               let headerView = tableView.headerView else { return }
 
         // Create menu for header - this is the right-click context menu for columns
-        let menu = NSMenu(title: "Columns")
+        let menu = NSMenu(title: String(localized: "Columns"))
         menu.delegate = self
         menu.autoenablesItems = false
         headerMenu = menu
@@ -1393,7 +1419,7 @@ final class FileTableCoordinator: NSObject, NSTableViewDataSource, NSTableViewDe
         guard rowMenu == nil else { return }
 
         // Create menu for rows - context menu for file items
-        let menu = NSMenu(title: "File Actions")
+        let menu = NSMenu(title: String(localized: "File Actions"))
         menu.delegate = self
         menu.autoenablesItems = false
         rowMenu = menu
@@ -1645,6 +1671,11 @@ final class FileTableCoordinator: NSObject, NSTableViewDataSource, NSTableViewDe
                 self?.navigateSelection(by: offset)
             }
         }
+    }
+
+    func openRowInNewTab(_ row: Int) -> Bool {
+        guard row >= 0, row < items.count else { return false }
+        return viewModel.openFolderInNewTab(items[row])
     }
 
     func openSelectedItems() {
@@ -1975,10 +2006,11 @@ final class FileTableCoordinator: NSObject, NSTableViewDataSource, NSTableViewDe
         let url = item.url
         let targetPixelSize = Self.thumbnailPixelSize
 
+        if !ColorfulFileIcon.prefersThumbnail(for: item), ColorfulFileIcon.image(for: item) != nil { return }
         if cachedThumbnail(for: item) != nil { return }
         if thumbnailRequests[url] != nil { return }
         if let cached = thumbnailCache.cachedThumbnail(for: item, maxPixelSize: targetPixelSize) {
-            storeThumbnail(cached, for: item)
+            storeThumbnail(ColorfulFileIcon.prefersThumbnail(for: item) ? ColorfulFileIcon.listThumbnail(cached) : cached, for: item)
             return
         }
         if thumbnailCache.hasFailed(item: item) {
@@ -2000,7 +2032,7 @@ final class FileTableCoordinator: NSObject, NSTableViewDataSource, NSTableViewDe
             }
             switch result {
             case .loaded(let image):
-                self.storeThumbnail(image, for: item)
+                self.storeThumbnail(ColorfulFileIcon.prefersThumbnail(for: item) ? ColorfulFileIcon.listThumbnail(image) : image, for: item)
             case .failed:
                 // Retried when scrolling ends
                 if !self.isLiveScrolling {
@@ -2024,13 +2056,6 @@ final class FileTableCoordinator: NSObject, NSTableViewDataSource, NSTableViewDe
             }
         }
     }
-
-    private func nameColumnIndex(in tableView: NSTableView) -> Int {
-        if let index = tableView.tableColumns.firstIndex(where: { $0.identifier.rawValue == ListColumn.name.rawValue }) {
-            return index
-        }
-        return 0
-    }
 }
 
 // MARK: - NSMenuDelegate for Menus
@@ -2048,7 +2073,7 @@ extension FileTableCoordinator: NSMenuDelegate {
     }
 
     private func buildHeaderMenu(_ menu: NSMenu) {
-        let titleItem = NSMenuItem(title: "Columns", action: nil, keyEquivalent: "")
+        let titleItem = NSMenuItem(title: String(localized: "Columns"), action: nil, keyEquivalent: "")
         titleItem.isEnabled = false
         menu.addItem(titleItem)
         menu.addItem(NSMenuItem.separator())
@@ -2057,7 +2082,7 @@ extension FileTableCoordinator: NSMenuDelegate {
         for column in ListColumn.allCases {
             let isVisible = columns.first(where: { $0.column == column })?.isVisible ?? false
             let item = NSMenuItem(
-                title: column.rawValue,
+                title: column.localizedName,
                 action: #selector(toggleColumnVisibility(_:)),
                 keyEquivalent: ""
             )
@@ -2071,7 +2096,7 @@ extension FileTableCoordinator: NSMenuDelegate {
         menu.addItem(NSMenuItem.separator())
 
         let resetItem = NSMenuItem(
-            title: "Reset to Defaults",
+            title: String(localized: "Reset to Defaults"),
             action: #selector(resetColumnsToDefaults(_:)),
             keyEquivalent: ""
         )
@@ -2121,18 +2146,18 @@ extension FileTableCoordinator: NSMenuDelegate {
         let anyFromArchive = targets.contains { $0.isFromArchive }
 
         // Open
-        let openItem = NSMenuItem(title: "Open", action: #selector(menuOpen(_:)), keyEquivalent: "")
+        let openItem = NSMenuItem(title: String(localized: "Open"), action: #selector(menuOpen(_:)), keyEquivalent: "")
         openItem.target = self
         menu.addItem(openItem)
 
         if isSingle && !item.isDirectory {
-            let openArchive = NSMenuItem(title: "Open as Archive", action: #selector(menuOpenAsArchive(_:)), keyEquivalent: "")
+            let openArchive = NSMenuItem(title: String(localized: "Open as Archive"), action: #selector(menuOpenAsArchive(_:)), keyEquivalent: "")
             openArchive.target = self
             menu.addItem(openArchive)
         }
         let archives = ArchiveExtractionMode.eligibleItems(targets)
         if !archives.isEmpty {
-            let title = archives.count > 1 ? "Extract Archives" : "Extract Archive"
+            let title = archives.count > 1 ? String(localized: "Extract Archives") : String(localized: "Extract Archive")
             let submenu = NSMenu(title: title)
             for mode in ArchiveExtractionMode.allCases {
                 let option = NSMenuItem(title: mode.title(for: archives), action: #selector(menuExtractArchive(_:)), keyEquivalent: "")
@@ -2146,24 +2171,19 @@ extension FileTableCoordinator: NSMenuDelegate {
         }
 
         if !viewModel.itemsForCompression(targets).isEmpty {
-            for format in ArchiveCompressionFormat.allCases {
-                let option = NSMenuItem(title: format.title, action: #selector(menuCompressArchive(_:)), keyEquivalent: "")
-                option.target = self
-                option.representedObject = format
-                menu.addItem(option)
-            }
+            CustomActions.append([CustomCompression.menuEntry(viewModel: viewModel) { targets }], to: menu)
         }
 
         // Show Package Contents (for .app, .bundle, etc.)
         if isSingle && isPackage(item) {
-            let packageItem = NSMenuItem(title: "Show Package Contents", action: #selector(menuShowPackageContents(_:)), keyEquivalent: "")
+            let packageItem = NSMenuItem(title: String(localized: "Show Package Contents"), action: #selector(menuShowPackageContents(_:)), keyEquivalent: "")
             packageItem.target = self
             menu.addItem(packageItem)
         }
 
         // Open With submenu
         if !anyFromArchive && !targets.contains(where: { $0.isDirectory }) {
-            let openWithItem = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
+            let openWithItem = NSMenuItem(title: String(localized: "Open With"), action: nil, keyEquivalent: "")
             openWithItem.submenu = OpenWithMenuBuilder.buildNSMenu(for: targets.map(\.url), target: self)
             menu.addItem(openWithItem)
         }
@@ -2171,7 +2191,7 @@ extension FileTableCoordinator: NSMenuDelegate {
         menu.addItem(NSMenuItem.separator())
 
         // Get Info
-        let getInfoItem = NSMenuItem(title: "Get Info", action: #selector(menuGetInfo(_:)), keyEquivalent: "")
+        let getInfoItem = NSMenuItem(title: String(localized: "Get Info"), action: #selector(menuGetInfo(_:)), keyEquivalent: "")
         getInfoItem.target = self
         getInfoItem.isEnabled = !anyFromArchive
         menu.addItem(getInfoItem)
@@ -2181,7 +2201,7 @@ extension FileTableCoordinator: NSMenuDelegate {
         // Tags submenu (only for non-archive items)
         if !anyFromArchive {
             let targetTags = targets.map { $0.tags }
-            let tagsMenu = NSMenu(title: "Tags")
+            let tagsMenu = NSMenu(title: String(localized: "Tags"))
             for tag in FinderTag.allTags {
                 let tagItem = NSMenuItem(title: tag.name, action: #selector(menuToggleTag(_:)), keyEquivalent: "")
                 tagItem.target = self
@@ -2202,12 +2222,12 @@ extension FileTableCoordinator: NSMenuDelegate {
 
             if targetTags.contains(where: { !$0.isEmpty }) {
                 tagsMenu.addItem(NSMenuItem.separator())
-                let removeAllItem = NSMenuItem(title: "Remove All Tags", action: #selector(menuRemoveAllTags(_:)), keyEquivalent: "")
+                let removeAllItem = NSMenuItem(title: String(localized: "Remove All Tags"), action: #selector(menuRemoveAllTags(_:)), keyEquivalent: "")
                 removeAllItem.target = self
                 tagsMenu.addItem(removeAllItem)
             }
 
-            let tagsMenuItem = NSMenuItem(title: "Tags", action: nil, keyEquivalent: "")
+            let tagsMenuItem = NSMenuItem(title: String(localized: "Tags"), action: nil, keyEquivalent: "")
             tagsMenuItem.submenu = tagsMenu
             menu.addItem(tagsMenuItem)
 
@@ -2215,17 +2235,17 @@ extension FileTableCoordinator: NSMenuDelegate {
         }
 
         // Copy
-        let copyItem = NSMenuItem(title: "Copy", action: #selector(menuCopy(_:)), keyEquivalent: "")
+        let copyItem = NSMenuItem(title: String(localized: "Copy"), action: #selector(menuCopy(_:)), keyEquivalent: "")
         copyItem.target = self
         menu.addItem(copyItem)
 
         // Cut
-        let cutItem = NSMenuItem(title: "Cut", action: #selector(menuCut(_:)), keyEquivalent: "")
+        let cutItem = NSMenuItem(title: String(localized: "Cut"), action: #selector(menuCut(_:)), keyEquivalent: "")
         cutItem.target = self
         menu.addItem(cutItem)
 
         // Duplicate
-        let duplicateItem = NSMenuItem(title: "Duplicate", action: #selector(menuDuplicate(_:)), keyEquivalent: "")
+        let duplicateItem = NSMenuItem(title: String(localized: "Duplicate"), action: #selector(menuDuplicate(_:)), keyEquivalent: "")
         duplicateItem.target = self
         duplicateItem.isEnabled = !anyFromArchive
         menu.addItem(duplicateItem)
@@ -2233,13 +2253,13 @@ extension FileTableCoordinator: NSMenuDelegate {
         menu.addItem(NSMenuItem.separator())
 
         // Rename
-        let renameItem = NSMenuItem(title: "Rename", action: #selector(menuRename(_:)), keyEquivalent: "")
+        let renameItem = NSMenuItem(title: String(localized: "Rename"), action: #selector(menuRename(_:)), keyEquivalent: "")
         renameItem.target = self
         renameItem.isEnabled = isSingle && !anyFromArchive
         menu.addItem(renameItem)
 
         // Move to Trash
-        let trashItem = NSMenuItem(title: "Move to Trash", action: #selector(menuMoveToTrash(_:)), keyEquivalent: "")
+        let trashItem = NSMenuItem(title: String(localized: "Move to Trash"), action: #selector(menuMoveToTrash(_:)), keyEquivalent: "")
         trashItem.target = self
         trashItem.isEnabled = !anyFromArchive
         menu.addItem(trashItem)
@@ -2247,9 +2267,11 @@ extension FileTableCoordinator: NSMenuDelegate {
         menu.addItem(NSMenuItem.separator())
 
         // Show in Finder
-        let finderItem = NSMenuItem(title: "Show in Finder", action: #selector(menuShowInFinder(_:)), keyEquivalent: "")
+        let finderItem = NSMenuItem(title: String(localized: "Show in Finder"), action: #selector(menuShowInFinder(_:)), keyEquivalent: "")
         finderItem.target = self
         menu.addItem(finderItem)
+
+        CustomActions.append(CustomActions.itemEntries(viewModel: viewModel, canUse: !anyFromArchive && targets.allSatisfy { $0.url.isFileURL }) { targets }, to: menu)
     }
 
     private func buildEmptySpaceMenu(_ menu: NSMenu) {
@@ -2257,12 +2279,12 @@ extension FileTableCoordinator: NSMenuDelegate {
         contextMenuClickedItem = nil
 
         // New Folder
-        let newFolderItem = NSMenuItem(title: "New Folder", action: #selector(menuNewFolder(_:)), keyEquivalent: "")
+        let newFolderItem = NSMenuItem(title: String(localized: "New Folder"), action: #selector(menuNewFolder(_:)), keyEquivalent: "")
         newFolderItem.target = self
         menu.addItem(newFolderItem)
 
         // Paste (if clipboard has files)
-        let pasteItem = NSMenuItem(title: "Paste", action: #selector(menuPaste(_:)), keyEquivalent: "")
+        let pasteItem = NSMenuItem(title: String(localized: "Paste"), action: #selector(menuPaste(_:)), keyEquivalent: "")
         pasteItem.target = self
         pasteItem.isEnabled = viewModel.canPaste
         menu.addItem(pasteItem)
@@ -2270,9 +2292,11 @@ extension FileTableCoordinator: NSMenuDelegate {
         menu.addItem(NSMenuItem.separator())
 
         // Show in Finder
-        let finderItem = NSMenuItem(title: "Show in Finder", action: #selector(menuShowCurrentFolderInFinder(_:)), keyEquivalent: "")
+        let finderItem = NSMenuItem(title: String(localized: "Show in Finder"), action: #selector(menuShowCurrentFolderInFinder(_:)), keyEquivalent: "")
         finderItem.target = self
         menu.addItem(finderItem)
+
+        CustomActions.append(CustomActions.backgroundEntries(viewModel: viewModel, folder: viewModel.currentPath), to: menu)
     }
 
     // MARK: - Header Menu Actions
@@ -2428,7 +2452,7 @@ extension FileTableCoordinator {
         return item.url as NSURL
     }
 
-    // Customize drag image for multi-selection (shows stacked icons)
+    // Finder-style drag image (`DragPreview`)
     func tableView(_ tableView: NSTableView, draggingSession session: NSDraggingSession, willBeginAt screenPoint: NSPoint, forRowIndexes rowIndexes: IndexSet) {
         // Mark the drag as internal (suppresses drop overlays; drop targets validate the URLs)
         let urls = rowIndexes.compactMap { row in
@@ -2436,9 +2460,15 @@ extension FileTableCoordinator {
         }
         InternalDragState.shared.beginDrag(urls: urls)
 
-        // Use stack formation for multiple items (like Finder)
-        if rowIndexes.count > 1 {
-            session.draggingFormation = .stack
+        let nameColumn = tableView.column(withIdentifier: NSUserInterfaceItemIdentifier(ListColumn.name.rawValue))
+        let rows = rowIndexes.filter { $0 < items.count && !items[$0].isFromArchive }
+        let icons = rows.map { row in
+            (nameColumn >= 0 ? (tableView.view(atColumn: nameColumn, row: row, makeIfNecessary: false) as? FileNameCellView)?.displayedIcon : nil) ?? items[row].icon
+        }
+        if let first = rows.first {
+            DragPreview.apply(to: session, in: tableView, screenPoint: screenPoint, icons: icons,
+                              firstName: FileNameCellView.displayText(for: items[first], showFileExtensions: appSettings.showFileExtensions),
+                              classes: [NSURL.self])
         }
     }
 
@@ -2550,6 +2580,7 @@ extension FileTableCoordinator {
 
     func tableView(_ tableView: NSTableView, validateDrop info: NSDraggingInfo, proposedRow row: Int, proposedDropOperation dropOperation: NSTableView.DropOperation) -> NSDragOperation {
         guard acceptsDrops else { return [] }
+        springLoad(tableView, folder: dropTargetFolder(row: row, dropOperation: dropOperation))
         let urls = draggedURLs(info)
         guard !urls.isEmpty else { return [] }
 

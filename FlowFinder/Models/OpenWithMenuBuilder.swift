@@ -80,14 +80,14 @@ enum OpenWithMenuBuilder {
     /// Build an "Open With" NSMenu submenu for the given file URLs.
     /// The `target` receives the action selectors.
     static func buildNSMenu(for fileURLs: [URL], target: AnyObject) -> NSMenu {
-        let menu = NSMenu(title: "Open With")
+        let menu = NSMenu(title: String(localized: "Open With"))
 
         guard !fileURLs.isEmpty else { return menu }
 
         let apps = compatibleApps(for: fileURLs)
 
         if apps.isEmpty {
-            let noAppsItem = NSMenuItem(title: "No Applications Found", action: nil, keyEquivalent: "")
+            let noAppsItem = NSMenuItem(title: String(localized: "No Applications Found"), action: nil, keyEquivalent: "")
             noAppsItem.isEnabled = false
             menu.addItem(noAppsItem)
         } else {
@@ -116,13 +116,14 @@ enum OpenWithMenuBuilder {
         menu.addItem(.separator())
 
         let otherItem = NSMenuItem(
-            title: "Other...",
+            title: String(localized: "Other..."),
             action: #selector(OpenWithActionTarget.openWithOther(_:)),
             keyEquivalent: ""
         )
         otherItem.target = target
         otherItem.representedObject = fileURLs
         menu.addItem(otherItem)
+        menu.addItem(DefaultAppChooser.menuItem(for: fileURLs))
 
         return menu
     }
@@ -141,7 +142,7 @@ enum OpenWithMenuBuilder {
                 MainActor.assumeIsolated {
                     let alert = NSAlert()
                     alert.alertStyle = .warning
-                    alert.messageText = "Couldn’t open with “\(FileManager.default.displayName(atPath: appURL.path))”"
+                    alert.messageText = String(localized: "Couldn’t open with “\(FileManager.default.displayName(atPath: appURL.path))”")
                     alert.informativeText = message
                     alert.runModal()
                 }
@@ -152,9 +153,9 @@ enum OpenWithMenuBuilder {
     /// Show an NSOpenPanel to choose an application, then open the files with it.
     static func showOpenWithPanel(for fileURLs: [URL], relativeTo window: NSWindow? = nil) {
         let panel = NSOpenPanel()
-        panel.title = "Choose Application"
-        panel.message = "Choose an application to open the selected item."
-        panel.prompt = "Open"
+        panel.title = String(localized: "Choose Application")
+        panel.message = String(localized: "Choose an application to open the selected item.")
+        panel.prompt = String(localized: "Open")
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
@@ -229,6 +230,10 @@ struct OpenWithSubmenu: View {
 
             Button("Other...") {
                 OpenWithMenuBuilder.showOpenWithPanel(for: fileURLs)
+            }
+
+            Button("Change Default Application...") {
+                DefaultAppChooser.show(for: fileURLs)
             }
         }
     }

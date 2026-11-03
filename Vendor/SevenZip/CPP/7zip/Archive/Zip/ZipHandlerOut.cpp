@@ -18,6 +18,11 @@
 #include "../Common/ItemNameUtils.h"
 #include "../Common/ParseProperties.h"
 
+#ifdef __APPLE__
+// Defined in Mac/Core/SZUpdater.mm
+void SZNormalizeNFC(UString &s);
+#endif
+
 #include "ZipHandler.h"
 #include "ZipUpdate.h"
 
@@ -260,6 +265,9 @@ Z7_COM7F_IMF(CHandler::UpdateItems(ISequentialOutStream *outStream, UInt32 numIt
       UtcFileTime_To_LocalDosTime(ui.Ntfs_MTime, ui.Time);
 
       NItemName::ReplaceSlashes_OsToUnix(name);
+#ifdef __APPLE__
+      SZNormalizeNFC(name);
+#endif
       
       bool needSlash = ui.IsDir;
       const wchar_t kSlash = L'/';

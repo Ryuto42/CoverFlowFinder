@@ -58,27 +58,27 @@ enum CloudSyncStatus: Equatable, Hashable {
     var description: String {
         switch self {
         case .local:
-            return "Local file"
+            return String(localized: "Local file")
         case .downloaded:
-            return "Downloaded"
+            return String(localized: "Downloaded")
         case .notDownloaded:
-            return "Available in iCloud"
+            return String(localized: "Not Downloaded")
         case .downloading(let progress):
             if let percent = Self.percentString(progress) {
-                return "Downloading (\(percent))"
+                return String(localized: "Downloading (\(percent))")
             }
-            return "Downloading..."
+            return String(localized: "Downloading...")
         case .uploading(let progress):
             if let percent = Self.percentString(progress) {
-                return "Uploading (\(percent))"
+                return String(localized: "Uploading (\(percent))")
             }
-            return "Uploading..."
+            return String(localized: "Uploading...")
         case .waitingForUpload:
-            return "Waiting to upload"
+            return String(localized: "Waiting to upload")
         case .hasConflict:
-            return "Sync conflict"
+            return String(localized: "Sync conflict")
         case .error:
-            return "Sync error"
+            return String(localized: "Sync error")
         }
     }
 
@@ -108,9 +108,9 @@ enum CloudSyncStatus: Equatable, Hashable {
         }
     }
 
-    /// Whether a badge should be shown for this status
+    /// Whether a badge should be shown for this status (nothing while in sync)
     var shouldShowBadge: Bool {
-        self != .local && !systemImage.isEmpty
+        self != .local && self != .downloaded && !systemImage.isEmpty
     }
 
     // Custom Equatable to handle progress values

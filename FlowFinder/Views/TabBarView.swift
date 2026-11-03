@@ -4,6 +4,8 @@ import SwiftUI
 struct BrowserTab: Identifiable {
     let id: UUID
     let viewModel: FileBrowserViewModel
+    /// Set while the tab shows two panes side by side; `viewModel` is then the left one.
+    var split: TabSplitState?
 
     init(initialPath: URL? = nil) {
         self.id = UUID()
@@ -23,6 +25,8 @@ struct BrowserTab: Identifiable {
 final class BrowserTabStore: ObservableObject {
     @Published var tabs: [BrowserTab]
     @Published var selectedTabId: UUID
+    /// Folders of recently closed tabs, newest last (⇧⌘T).
+    var closedTabURLs: [URL] = []
 
     convenience init() {
         self.init(initialTab: BrowserTab())
@@ -48,6 +52,7 @@ final class BrowserTabStore: ObservableObject {
     func closeTab(_ tabId: UUID) -> BrowserTab? {
         guard tabs.count > 1, let index = tabs.firstIndex(where: { $0.id == tabId }) else { return nil }
         let removed = tabs.remove(at: index)
+        recordClosedTab(removed)
         if selectedTabId == tabId {
             selectedTabId = tabs[min(index, tabs.count - 1)].id
         }

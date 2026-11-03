@@ -52,6 +52,10 @@ struct AsyncListIconView: View {
     }
 
     private func loadIconIfNeeded() {
+        if !ColorfulFileIcon.prefersThumbnail(for: item), ColorfulFileIcon.image(for: item) != nil {
+            image = nil
+            return
+        }
         let key = currentKey
         if key == loadedKey {
             return
@@ -69,7 +73,7 @@ struct AsyncListIconView: View {
             requestToken = nil
             switch result {
             case .loaded(let thumbnail):
-                image = thumbnail
+                image = ColorfulFileIcon.prefersThumbnail(for: item) ? ColorfulFileIcon.listThumbnail(thumbnail) : thumbnail
             case .failed:
                 loadFallbackIcon(for: item, key: key)
             case .cancelled:

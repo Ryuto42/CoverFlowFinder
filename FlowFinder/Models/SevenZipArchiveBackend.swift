@@ -6,7 +6,7 @@ import SevenZipKit
 /// caller-owned byte writers cross the boundary; extraction never lets the engine write members to disk.
 final class SevenZipArchiveBackend: @unchecked Sendable {
     static let shared = SevenZipArchiveBackend()
-    private let queue = DispatchQueue(label: "com.flowfinder.archive.engine", qos: .userInitiated)
+    let queue = DispatchQueue(label: "com.flowfinder.archive.engine", qos: .userInitiated)
     private struct Session {
         let archive: SZArchive
         let revision: String
@@ -139,6 +139,10 @@ final class SevenZipArchiveBackend: @unchecked Sendable {
         }
     }
 
+    static let macMetadataPatterns = [
+        ".DS_Store", "._*", "__MACOSX", "Icon\r", ".Spotlight-V100", ".Trashes", ".fseventsd",
+    ]
+
     /// Creates only a fresh archive in caller-owned staging. Publishing is a separate file operation.
     func createArchive(at url: URL, sources: [URL], format: ArchiveCompressionFormat, progress: Progress) throws {
         try queue.sync {
@@ -146,7 +150,7 @@ final class SevenZipArchiveBackend: @unchecked Sendable {
                                           passwordProvider: nil, reportsProgress: true)
             do {
                 guard !FileOperationEngine.itemExists(at: url), !sources.isEmpty else {
-                    throw FileOperationEngine.makeError("Choose files or folders and a new archive name.")
+                    throw FileOperationEngine.makeError(String(localized: "Choose files or folders and a new archive name."))
                 }
                 if delegate.progressCheckBreak() { throw CocoaError(.userCancelled) }
                 let options = SZUpdateOptions(archivePath: url.path)
@@ -163,15 +167,22 @@ final class SevenZipArchiveBackend: @unchecked Sendable {
                 } else {
                     options.properties += [SZUpdateProperty(name: "0", value: "LZMA2"), SZUpdateProperty(name: "0d", value: "16m")]
                 }
-                let result = try SZUpdater.update(with: options, sourcePaths: sources.map(\.path), progress: delegate)
+                var specs = sources.map { SZPathSpec.literal($0.path) }
+                if UserDefaults.standard.object(forKey: "settings.compressExcludeMacFiles") as? Bool ?? true {
+                    specs += Self.macMetadataPatterns.map {
+                        SZPathSpec.spec(path: $0, include: false, recursedType: .recursed,
+                                        wildcardMatching: true, markMode: .fileOrDir)
+                    }
+                }
+                let result = try SZUpdater.update(with: options, pathSpecs: specs, progress: delegate)
                 if delegate.cancelled { throw CocoaError(.userCancelled) }
                 guard result.errorCount == 0, result.failedPaths.isEmpty else {
                     let detail = result.failedPaths.prefix(5).map { ($0 as NSString).lastPathComponent }.joined(separator: ", ")
-                    throw FileOperationEngine.makeError("Some items could not be read. The archive was not created." + (detail.isEmpty ? "" : "\n" + detail))
+                    throw FileOperationEngine.makeError(String(localized: "Some items could not be read. The archive was not created.") + (detail.isEmpty ? "" : "\n" + detail))
                 }
                 guard URL(fileURLWithPath: result.archivePath).standardizedFileURL == url.standardizedFileURL,
                       FileOperationEngine.itemExists(at: url) else {
-                    throw FileOperationEngine.makeError("The compression engine did not create the requested archive.")
+                    throw FileOperationEngine.makeError(String(localized: "The compression engine did not create the requested archive."))
                 }
             } catch {
                 if delegate.cancelled { throw CocoaError(.userCancelled) }
@@ -181,7 +192,7 @@ final class SevenZipArchiveBackend: @unchecked Sendable {
     }
 }
 
-private final class EngineProgress: NSObject, SZProgressDelegate, SZPasswordDelegate {
+final class EngineProgress: NSObject, SZProgressDelegate, SZPasswordDelegate {
     let progress: Progress?
     let allowPasswordPrompt: Bool
     private let passwordProvider: ((String) -> String?)?
@@ -206,13 +217,13 @@ private final class EngineProgress: NSObject, SZProgressDelegate, SZPasswordDele
         guard allowPasswordPrompt, !cancelled else { return nil }
         let ask = { () -> String? in
             let alert = NSAlert()
-            alert.messageText = "Archive Password"
-            alert.informativeText = "Enter the password for “\((path as NSString).lastPathComponent)”."
+            alert.messageText = String(localized: "Archive Password")
+            alert.informativeText = String(localized: "Enter the password for “\((path as NSString).lastPathComponent)”.")
             let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
-            field.placeholderString = "Password"
+            field.placeholderString = String(localized: "Password")
             alert.accessoryView = field
-            alert.addButton(withTitle: "Open")
-            alert.addButton(withTitle: "Cancel")
+            alert.addButton(withTitle: String(localized: "Open"))
+            alert.addButton(withTitle: String(localized: "Cancel"))
             alert.window.initialFirstResponder = field
             return alert.runModal() == .alertFirstButtonReturn ? field.stringValue : nil
         }

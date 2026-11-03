@@ -71,6 +71,7 @@ struct CoverFlowView: View {
     @EnvironmentObject private var settings: AppSettings
     @ObservedObject var viewModel: FileBrowserViewModel
     let items: [FileItem]
+    @Environment(\.isInSplitPane) private var isInSplitPane
 
     @State private var sortedItemsCache: [FileItem] = []
     @State private var thumbnails: [URL: NSImage] = [:]
@@ -137,6 +138,17 @@ struct CoverFlowView: View {
         )
     }
 
+    private var isRightLayout: Bool {
+        settings.coverFlowLayout != "top"
+    }
+
+    /// The centred item while something is selected; nil shows the current folder instead.
+    private var selectedInfoItem: FileItem? {
+        guard !viewModel.selectedItems.isEmpty,
+              viewModel.coverFlowSelectedIndex < sortedItemsCache.count else { return nil }
+        return sortedItemsCache[viewModel.coverFlowSelectedIndex]
+    }
+
     var body: some View {
         let _ = logBodyCall()
         GeometryReader { geometry in
@@ -157,190 +169,221 @@ struct CoverFlowView: View {
                 return min(max(activeCoverFlowHeight, minCoverFlowHeight), maxCoverFlowHeight)
             }()
 
-            VStack(spacing: 0) {
-                CoverFlowContainer(
-                    items: sortedItemsCache,
-                    itemsToken: itemsToken,
-                    selectedIndex: $viewModel.coverFlowSelectedIndex,
-                    thumbnails: thumbnails,
-                    thumbnailCount: thumbnails.count,
-                    navigationGeneration: viewModel.navigationGeneration,
-                    selectedItems: viewModel.selectedItems,
-                    cutItemURLs: viewModel.cutItemURLs,
-                    coverScale: settings.coverFlowScaleValue,
-                    scrollSensitivity: settings.coverFlowSwipeSpeedValue,
-                    currentFolderURL: canModifyCurrentFolder ? viewModel.currentPath : nil,
-                    canModifyFolder: canModifyCurrentFolder,
-                    canShowFolderInfo: canShowCurrentFolderInfo,
-                    focusViewModel: viewModel,
-                    reference: stripReference,
-                    onSelect: { index, intent in
-                        applySelection(at: index, intent: intent)
-                    },
-                    onBrowse: { index in
-                        // Drag auto-scroll: the strip moves, the selection being dragged stays
-                        if index < sortedItemsCache.count {
-                            setCentredIndex(index)
-                        }
-                    },
-                    onOpen: { index in
-                        openFromStrip(at: index)
-                    },
-                    onOpenItems: { targets in
-                        openItems(targets)
-                    },
-                    onItemCommand: { command, targets in
-                        performItemCommand(command, on: targets)
-                    },
-                    onDeselect: {
-                        selectionFlag.userClearedSelection = true
-                        viewModel.selectedItems.removeAll()
-                        viewModel.cancelPendingRename()
-                        updateQuickLook(for: nil)
-                    },
-                    onDrop: { urls, operation in
-                        viewModel.handleDrop(urls: urls, operation: operation)
-                    },
-                    onDropToFolder: { urls, folderURL, operation in
-                        viewModel.handleDrop(urls: urls, to: folderURL, operation: operation)
-                    },
-                    onScrollStateChange: { scrolling in
-                        DispatchQueue.main.async {
-                            thumbState.isScrolling = scrolling
-                            if !scrolling {
-                                scheduleThumbnailPass()
-                            }
-                        }
-                    },
-                    onCopy: {
-                        viewModel.copySelectedItems()
-                    },
-                    onCut: {
-                        viewModel.cutSelectedItems()
-                    },
-                    onPaste: {
-                        guard canModifyCurrentFolder, viewModel.canPaste else {
-                            NSSound.beep()
-                            return
-                        }
-                        viewModel.paste()
-                    },
-                    canPaste: {
-                        viewModel.canPaste
-                    },
-                    onDelete: {
-                        viewModel.deleteSelectedItems()
-                    },
-                    onShowPackageContents: { item in
-                        viewModel.navigateTo(item.url)
-                    },
-                    onQuickLook: { item in
-                        toggleQuickLook(for: item)
-                    },
-                    onExtendSelect: { index in
-                        selectionFlag.userClearedSelection = false
-                        viewModel.coverFlowSelectedIndex = index
-                        if index < sortedItemsCache.count {
-                            viewModel.selectRange(to: index, in: sortedItemsCache)
-                            updateQuickLook(for: sortedItemsCache[index])
-                        }
-                    },
-                    onSelectAll: {
-                        selectionFlag.userClearedSelection = false
-                        // Keep the centred item as the lead of the selection
-                        viewModel.lastSelectedIndex = viewModel.coverFlowSelectedIndex
-                        viewModel.selectedItems = Set(sortedItemsCache)
-                    },
-                    onNewFolder: {
-                        guard canModifyCurrentFolder else {
-                            NSSound.beep()
-                            return
-                        }
-                        viewModel.createNewFolder()
-                    },
-                    onGetInfo: {
-                        showInfoForCurrentFolder()
-                    },
-                    onActivityStateChange: { isActive in
-                        // Called from updateNSView; don't touch view state during the update
-                        DispatchQueue.main.async {
-                            handleCoverFlowActivityChange(isActive)
-                        }
-                    },
-                    onCentreCoverPixelSizeChange: { pixels in
-                        DispatchQueue.main.async {
-                            guard thumbState.centreCoverPixels != pixels else { return }
-                            thumbState.centreCoverPixels = pixels
+            let strip = CoverFlowContainer(
+                items: sortedItemsCache,
+                itemsToken: itemsToken,
+                selectedIndex: $viewModel.coverFlowSelectedIndex,
+                thumbnails: thumbnails,
+                thumbnailCount: thumbnails.count,
+                navigationGeneration: viewModel.navigationGeneration,
+                selectedItems: viewModel.selectedItems,
+                cutItemURLs: viewModel.cutItemURLs,
+                coverScale: settings.coverFlowScaleValue,
+                scrollSensitivity: settings.coverFlowSwipeSpeedValue,
+                currentFolderURL: canModifyCurrentFolder ? viewModel.currentPath : nil,
+                canModifyFolder: canModifyCurrentFolder,
+                canShowFolderInfo: canShowCurrentFolderInfo,
+                focusViewModel: viewModel,
+                reference: stripReference,
+                onSelect: { index, intent in
+                    applySelection(at: index, intent: intent)
+                },
+                onBrowse: { index in
+                    // Drag auto-scroll: the strip moves, the selection being dragged stays
+                    if index < sortedItemsCache.count {
+                        setCentredIndex(index)
+                    }
+                },
+                onOpen: { index in
+                    openFromStrip(at: index)
+                },
+                onOpenItems: { targets in
+                    openItems(targets)
+                },
+                onItemCommand: { command, targets in
+                    performItemCommand(command, on: targets)
+                },
+                onDeselect: {
+                    selectionFlag.userClearedSelection = true
+                    viewModel.selectedItems.removeAll()
+                    viewModel.cancelPendingRename()
+                    updateQuickLook(for: nil)
+                },
+                onDrop: { urls, operation in
+                    viewModel.handleDrop(urls: urls, operation: operation)
+                },
+                onDropToFolder: { urls, folderURL, operation in
+                    viewModel.handleDrop(urls: urls, to: folderURL, operation: operation)
+                },
+                onScrollStateChange: { scrolling in
+                    DispatchQueue.main.async {
+                        thumbState.isScrolling = scrolling
+                        if !scrolling {
                             scheduleThumbnailPass()
                         }
                     }
-                )
-                .id("coverFlowContainer")  // Stable identity to prevent view recreation
-                .frame(height: coverFlowHeight)
-
-                if settings.coverFlowShowInfo,
-                   !sortedItemsCache.isEmpty,
-                   viewModel.coverFlowSelectedIndex < sortedItemsCache.count {
-                    let selectedItem = sortedItemsCache[viewModel.coverFlowSelectedIndex]
-                    VStack(spacing: 4) {
-                        Text(selectedItem.displayName(showFileExtensions: settings.showFileExtensions))
-                            .font(settings.coverFlowTitleFont)
-                            .lineLimit(1)
-                        HStack(spacing: 16) {
-                            // Folders and packages once their contents are totalled
-                            if !selectedItem.isDirectory || selectedItem.calculatedSize != nil {
-                                Text(selectedItem.formattedSize)
-                                    .foregroundColor(.secondary)
-                            }
-                            Text(selectedItem.formattedDate)
-                                .foregroundColor(.secondary)
-                        }
-                        .font(settings.coverFlowDetailFont)
+                },
+                onCopy: {
+                    viewModel.copySelectedItems()
+                },
+                onCut: {
+                    viewModel.cutSelectedItems()
+                },
+                onPaste: {
+                    guard canModifyCurrentFolder, viewModel.canPaste else {
+                        NSSound.beep()
+                        return
                     }
-                    .padding(.vertical, 8)
-                    .frame(maxWidth: .infinity)
-                    .background(Color(nsColor: .windowBackgroundColor))
-                    .background(
-                        GeometryReader { proxy in
-                            Color.clear.preference(key: CoverFlowInfoHeightKey.self, value: proxy.size.height)
+                    viewModel.paste()
+                },
+                canPaste: {
+                    viewModel.canPaste
+                },
+                onDelete: {
+                    viewModel.deleteSelectedItems()
+                },
+                onShowPackageContents: { item in
+                    viewModel.navigateTo(item.url)
+                },
+                onQuickLook: { item in
+                    toggleQuickLook(for: item)
+                },
+                onExtendSelect: { index in
+                    selectionFlag.userClearedSelection = false
+                    viewModel.coverFlowSelectedIndex = index
+                    if index < sortedItemsCache.count {
+                        viewModel.selectRange(to: index, in: sortedItemsCache)
+                        updateQuickLook(for: sortedItemsCache[index])
+                    }
+                },
+                onSelectAll: {
+                    selectionFlag.userClearedSelection = false
+                    // Keep the centred item as the lead of the selection
+                    viewModel.lastSelectedIndex = viewModel.coverFlowSelectedIndex
+                    viewModel.selectedItems = Set(sortedItemsCache)
+                },
+                onNewFolder: {
+                    guard canModifyCurrentFolder else {
+                        NSSound.beep()
+                        return
+                    }
+                    viewModel.createNewFolder()
+                },
+                onGetInfo: {
+                    showInfoForCurrentFolder()
+                },
+                onActivityStateChange: { isActive in
+                    // Called from updateNSView; don't touch view state during the update
+                    DispatchQueue.main.async {
+                        handleCoverFlowActivityChange(isActive)
+                    }
+                },
+                onCentreCoverPixelSizeChange: { pixels in
+                    DispatchQueue.main.async {
+                        guard thumbState.centreCoverPixels != pixels else { return }
+                        thumbState.centreCoverPixels = pixels
+                        scheduleThumbnailPass()
+                    }
+                },
+                portrait: isRightLayout
+            )
+            .id("coverFlowContainer")  // Stable identity to prevent view recreation
+
+            let list = FileListSection(
+                items: sortedItemsCache,
+                viewModel: viewModel,
+                onEmptySpaceClick: {
+                    // Click on empty space - deselect all
+                    selectionFlag.userClearedSelection = true
+                    viewModel.selectedItems.removeAll()
+                    viewModel.cancelPendingRename()
+                    updateQuickLook(for: nil)
+                }
+            )
+
+            if isRightLayout {
+                CoverFlowSidePanelLayout(
+                    strip: strip,
+                    list: list,
+                    info: settings.coverFlowShowInfo ? CoverFlowInfoPanel(
+                        item: selectedInfoItem,
+                        selectionCount: viewModel.selectedItems.count,
+                        folderURL: viewModel.currentPath,
+                        folderItemCount: sortedItemsCache.count
+                    ) : nil,
+                    grid: viewModel.selectedItems.count > 1 ? CoverFlowSelectionGrid(
+                        items: sortedItemsCache.filter { viewModel.selectedItems.contains($0) },
+                        showsDetails: settings.coverFlowShowInfo,
+                        onSelect: { item in
+                            if let index = thumbState.indexByURL[item.url] {
+                                applySelection(at: index, intent: .plain)
+                            }
                         }
                     )
-                    // Shows the selected package's (or folder's) total size
-                    .showsItemSizes(.selection, of: viewModel)
-                }
+                    .showsItemSizes(.selection, of: viewModel) : nil,
+                    showsPanel: !isInSplitPane || settings.coverFlowPanelInSplit
+                )
+            } else {
+                VStack(spacing: 0) {
+                    strip
+                        .frame(height: coverFlowHeight)
 
-                CoverFlowResizeHandle(
-                    height: handleHeight,
-                    onDrag: { delta in
-                        updateCoverFlowHeight(
-                            delta: delta,
-                            currentHeight: coverFlowHeight,
-                            minHeight: minCoverFlowHeight,
-                            maxHeight: maxCoverFlowHeight
-                        )
-                    },
-                    onDragEnded: {
-                        if let liveHeight = liveCoverFlowHeight {
-                            settings.coverFlowPaneHeight = Double(liveHeight)
+                    if settings.coverFlowShowInfo,
+                       !sortedItemsCache.isEmpty,
+                       viewModel.coverFlowSelectedIndex < sortedItemsCache.count {
+                        let selectedItem = sortedItemsCache[viewModel.coverFlowSelectedIndex]
+                        VStack(spacing: 4) {
+                            Text(selectedItem.displayName(showFileExtensions: settings.showFileExtensions))
+                                .font(settings.coverFlowTitleFont)
+                                .lineLimit(1)
+                            HStack(spacing: 16) {
+                                // Folders and packages once their contents are totalled
+                                if !selectedItem.isDirectory || selectedItem.calculatedSize != nil {
+                                    Text(selectedItem.formattedSize)
+                                        .monospacedDigit()
+                                        .foregroundColor(.secondary)
+                                }
+                                Text(selectedItem.formattedDate)
+                                    .monospacedDigit()
+                                    .foregroundColor(.secondary)
+                            }
+                            .font(settings.coverFlowDetailFont)
                         }
-                        liveCoverFlowHeight = nil
-                        dragStartCoverFlowHeight = nil
+                        .padding(.vertical, 8)
+                        .frame(maxWidth: .infinity)
+                        .uiBackground(.panelBottom)
+                        .background(
+                            GeometryReader { proxy in
+                                Color.clear.preference(key: CoverFlowInfoHeightKey.self, value: proxy.size.height)
+                            }
+                        )
+                        // Shows the selected package's (or folder's) total size
+                        .showsItemSizes(.selection, of: viewModel)
                     }
-                )
 
-                FileListSection(
-                    items: sortedItemsCache,
-                    viewModel: viewModel,
-                    onEmptySpaceClick: {
-                        // Click on empty space - deselect all
-                        selectionFlag.userClearedSelection = true
-                        viewModel.selectedItems.removeAll()
-                        viewModel.cancelPendingRename()
-                        updateQuickLook(for: nil)
-                    }
-                )
+                    CoverFlowResizeHandle(
+                        height: handleHeight,
+                        onDrag: { delta in
+                            updateCoverFlowHeight(
+                                delta: delta,
+                                currentHeight: coverFlowHeight,
+                                minHeight: minCoverFlowHeight,
+                                maxHeight: maxCoverFlowHeight
+                            )
+                        },
+                        onDragEnded: {
+                            if let liveHeight = liveCoverFlowHeight {
+                                settings.coverFlowPaneHeight = Double(liveHeight)
+                            }
+                            liveCoverFlowHeight = nil
+                            dragStartCoverFlowHeight = nil
+                        }
+                    )
+
+                    list
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .onAppear {
             thumbState.isActive = true
@@ -1117,6 +1160,7 @@ struct CoverFlowContainer: NSViewRepresentable {
     let onGetInfo: () -> Void  // Get Info for the current folder
     let onActivityStateChange: (Bool) -> Void
     let onCentreCoverPixelSizeChange: (CGFloat) -> Void
+    var portrait = false
 
     func makeNSView(context: Context) -> CoverFlowNSView {
         let view = CoverFlowNSView()
@@ -1176,6 +1220,7 @@ struct CoverFlowContainer: NSViewRepresentable {
         view.selectedItems = selectedItems
         view.cutItemURLs = cutItemURLs
         view.coverScale = coverScale
+        view.isPortrait = portrait
         view.scrollSensitivity = scrollSensitivity
         view.currentFolderURL = currentFolderURL
         view.canModifyFolder = canModifyFolder
@@ -1292,11 +1337,21 @@ class CoverFlowNSView: NSView, OpenWithActionTarget {
         }
     }
     var scrollSensitivity: CGFloat = 1.0
+    var isPortrait = false {
+        didSet {
+            if isPortrait != oldValue {
+                // Beside the list, covers mustn't spill over it
+                layer?.masksToBounds = isPortrait
+                rebuildCovers()
+                needsLayout = true
+            }
+        }
+    }
 
     private var baseCoverSize: CGFloat {
-        CoverFlowGeometry.baseCoverSize(viewSize: bounds.size, coverScale: coverScale)
+        CoverFlowGeometry.baseCoverSize(viewSize: bounds.size, coverScale: coverScale, portrait: isPortrait)
     }
-    private var coverSpacing: CGFloat { baseCoverSize * CoverFlowGeometry.spacingRatio }  // Space between side covers
+    private var coverSpacing: CGFloat { CoverFlowGeometry.spacing(baseCoverSize: baseCoverSize, portrait: isPortrait) }  // Space between side covers
     private let visibleRange = 12
     private var lastReportedCentrePixels: CGFloat = 0
 
@@ -1374,6 +1429,7 @@ class CoverFlowNSView: NSView, OpenWithActionTarget {
         layer?.addSublayer(gradientLayer)
         backgroundLayer = gradientLayer
         updateAppearanceColors()
+        NotificationCenter.default.addObserver(self, selector: #selector(translucencyChanged), name: UI.Colors.translucencyChanged, object: nil)
 
         // Register for drag and drop
         registerForDraggedTypes([.fileURL])
@@ -1450,14 +1506,18 @@ class CoverFlowNSView: NSView, OpenWithActionTarget {
         updateAppearanceColors()
     }
 
+    @objc private func translucencyChanged() {
+        updateAppearanceColors()
+    }
+
     private func updateAppearanceColors() {
         // Dynamic colors resolve against the current drawing appearance
         effectiveAppearance.performAsCurrentDrawingAppearance {
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             self.backgroundLayer?.colors = [
-                NSColor.windowBackgroundColor.cgColor,
-                NSColor.windowBackgroundColor.blended(withFraction: 0.3, of: .black)?.cgColor ?? NSColor.black.cgColor
+                UI.Colors.nsColor(.panel).cgColor,
+                UI.Colors.nsColor(.panelBottom).cgColor
             ]
             if let highlight = self.dropTargetHighlightLayer {
                 highlight.fillColor = NSColor.controlAccentColor.withAlphaComponent(0.18).cgColor
@@ -2157,7 +2217,8 @@ class CoverFlowNSView: NSView, OpenWithActionTarget {
         let placement = CoverFlowGeometry.placement(
             offsetFromCentre: index - selectedIndex,
             viewSize: bounds.size,
-            baseCoverSize: baseCoverSize
+            baseCoverSize: baseCoverSize,
+            portrait: isPortrait
         )
 
         if animated {
@@ -2478,16 +2539,16 @@ class CoverFlowNSView: NSView, OpenWithActionTarget {
             (submenu ?? menu).addItem(item)
         }
 
-        let openItem = NSMenuItem(title: "Open", action: #selector(menuOpen(_:)), keyEquivalent: "")
+        let openItem = NSMenuItem(title: String(localized: "Open"), action: #selector(menuOpen(_:)), keyEquivalent: "")
         openItem.target = self
         openItem.representedObject = targets
         menu.addItem(openItem)
         if let item = singleItem, !item.isDirectory {
-            addItem("Open as Archive", .openAsArchive, on: [item])
+            addItem(String(localized: "Open as Archive"), .openAsArchive, on: [item])
         }
         let archives = ArchiveExtractionMode.eligibleItems(targets)
         if !archives.isEmpty {
-            let title = archives.count > 1 ? "Extract Archives" : "Extract Archive"
+            let title = archives.count > 1 ? String(localized: "Extract Archives") : String(localized: "Extract Archive")
             let submenu = NSMenu(title: title)
             submenu.autoenablesItems = false
             for mode in ArchiveExtractionMode.allCases {
@@ -2499,14 +2560,14 @@ class CoverFlowNSView: NSView, OpenWithActionTarget {
         }
 
         if canModifyFolder && !ArchiveCompressionFormat.eligibleItems(targets).isEmpty {
-            for format in ArchiveCompressionFormat.allCases {
-                addItem(format.title, .compressArchive(format))
+            if let viewModel = focusViewModel {
+                CustomActions.append([CustomCompression.menuEntry(viewModel: viewModel) { targets }], to: menu)
             }
         }
 
         // Show Package Contents for bundles like .app
         if let item = singleItem, !item.isFromArchive, item.url.isFileURL, isPackage(item) {
-            let packageItem = NSMenuItem(title: "Show Package Contents", action: #selector(menuShowPackageContents(_:)), keyEquivalent: "")
+            let packageItem = NSMenuItem(title: String(localized: "Show Package Contents"), action: #selector(menuShowPackageContents(_:)), keyEquivalent: "")
             packageItem.target = self
             packageItem.representedObject = item
             menu.addItem(packageItem)
@@ -2515,22 +2576,22 @@ class CoverFlowNSView: NSView, OpenWithActionTarget {
         // Open With submenu (only for non-archive files)
         let openWithURLs = targets.filter { !$0.isFromArchive && !$0.isDirectory && $0.url.isFileURL }.map(\.url)
         if !openWithURLs.isEmpty && openWithURLs.count == targets.count {
-            let openWithItem = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
+            let openWithItem = NSMenuItem(title: String(localized: "Open With"), action: nil, keyEquivalent: "")
             openWithItem.submenu = OpenWithMenuBuilder.buildNSMenu(for: openWithURLs, target: self)
             menu.addItem(openWithItem)
         }
 
         menu.addItem(NSMenuItem.separator())
 
-        addItem("Get Info", .getInfo, on: [clickedItem], enabled: canEdit)
-        addItem("Quick Look", .quickLook, on: [clickedItem])
+        addItem(String(localized: "Get Info"), .getInfo, on: [clickedItem], enabled: canEdit)
+        addItem(String(localized: "Quick Look"), .quickLook, on: [clickedItem])
 
         menu.addItem(NSMenuItem.separator())
 
         // Tags submenu
         if canEdit {
             let targetTags = targets.map(\.tags)
-            let tagsMenu = NSMenu(title: "Tags")
+            let tagsMenu = NSMenu(title: String(localized: "Tags"))
             tagsMenu.autoenablesItems = false
             for tag in FinderTag.allTags {
                 let tagItem = NSMenuItem(title: tag.name, action: #selector(menuItemCommand(_:)), keyEquivalent: "")
@@ -2543,33 +2604,37 @@ class CoverFlowNSView: NSView, OpenWithActionTarget {
             }
             if targetTags.contains(where: { !$0.isEmpty }) {
                 tagsMenu.addItem(NSMenuItem.separator())
-                addItem("Remove All Tags", .removeAllTags, to: tagsMenu)
+                addItem(String(localized: "Remove All Tags"), .removeAllTags, to: tagsMenu)
             }
-            let tagsMenuItem = NSMenuItem(title: "Tags", action: nil, keyEquivalent: "")
+            let tagsMenuItem = NSMenuItem(title: String(localized: "Tags"), action: nil, keyEquivalent: "")
             tagsMenuItem.submenu = tagsMenu
             menu.addItem(tagsMenuItem)
 
             menu.addItem(NSMenuItem.separator())
         }
 
-        addItem("Copy", .copy, enabled: allFiles)
-        addItem("Cut", .cut, enabled: allFiles)
-        addItem("Duplicate", .duplicate, enabled: canEdit)
+        addItem(String(localized: "Copy"), .copy, enabled: allFiles)
+        addItem(String(localized: "Cut"), .cut, enabled: allFiles)
+        addItem(String(localized: "Duplicate"), .duplicate, enabled: canEdit)
 
         menu.addItem(NSMenuItem.separator())
 
-        addItem("Rename", .rename, enabled: canEdit && singleItem != nil)
-        addItem("Move to Trash", .moveToTrash, enabled: canEdit)
+        addItem(String(localized: "Rename"), .rename, enabled: canEdit && singleItem != nil)
+        addItem(String(localized: "Move to Trash"), .moveToTrash, enabled: canEdit)
 
         menu.addItem(NSMenuItem.separator())
 
-        let finderItem = NSMenuItem(title: "Show in Finder", action: #selector(menuShowInFinder(_:)), keyEquivalent: "")
+        let finderItem = NSMenuItem(title: String(localized: "Show in Finder"), action: #selector(menuShowInFinder(_:)), keyEquivalent: "")
         finderItem.target = self
         finderItem.representedObject = targets
         if targets.contains(where: { ($0.isFromArchive && $0.archiveURL == nil) || (!$0.isFromArchive && !$0.url.isFileURL) }) {
             finderItem.isEnabled = false
         }
         menu.addItem(finderItem)
+
+        if let viewModel = focusViewModel {
+            CustomActions.append(CustomActions.itemEntries(viewModel: viewModel, canUse: canEdit) { targets }, to: menu)
+        }
 
         return menu
     }
@@ -2587,22 +2652,26 @@ class CoverFlowNSView: NSView, OpenWithActionTarget {
         let menu = NSMenu()
         menu.autoenablesItems = false
 
-        let newFolderItem = NSMenuItem(title: "New Folder", action: #selector(menuNewFolder(_:)), keyEquivalent: "")
+        let newFolderItem = NSMenuItem(title: String(localized: "New Folder"), action: #selector(menuNewFolder(_:)), keyEquivalent: "")
         newFolderItem.target = self
         newFolderItem.isEnabled = canModifyFolder
         menu.addItem(newFolderItem)
 
-        let pasteItem = NSMenuItem(title: "Paste", action: #selector(menuPaste(_:)), keyEquivalent: "")
+        let pasteItem = NSMenuItem(title: String(localized: "Paste"), action: #selector(menuPaste(_:)), keyEquivalent: "")
         pasteItem.target = self
         pasteItem.isEnabled = canModifyFolder && (canPaste?() ?? false)
         menu.addItem(pasteItem)
 
         menu.addItem(NSMenuItem.separator())
 
-        let infoItem = NSMenuItem(title: "Get Info", action: #selector(menuGetInfo(_:)), keyEquivalent: "")
+        let infoItem = NSMenuItem(title: String(localized: "Get Info"), action: #selector(menuGetInfo(_:)), keyEquivalent: "")
         infoItem.target = self
         infoItem.isEnabled = canShowFolderInfo
         menu.addItem(infoItem)
+
+        if let viewModel = focusViewModel {
+            CustomActions.append(CustomActions.backgroundEntries(viewModel: viewModel, folder: viewModel.currentPath), to: menu)
+        }
 
         return menu
     }
@@ -2854,6 +2923,15 @@ class CoverFlowNSView: NSView, OpenWithActionTarget {
     // MARK: - Scrolling
 
     override func scrollWheel(with event: NSEvent) {
+        switch scrollRoute(for: event) {
+        case .enclosing:
+            super.scrollWheel(with: event)
+            return
+        case .both:
+            super.scrollWheel(with: event)
+        case .strip:
+            break
+        }
         guard !items.isEmpty else { return }
 
         // Determine scroll delta (horizontal preferred, vertical as fallback)
@@ -2886,6 +2964,42 @@ class CoverFlowNSView: NSView, OpenWithActionTarget {
         // The system's momentum ended (or the gesture was cancelled): settle now
         if event.momentumPhase == .ended || event.momentumPhase == .cancelled || event.phase == .cancelled {
             finishScrolling()
+        }
+    }
+
+    /// Inside the side panel's scroll view, a mostly vertical gesture scrolls the panel; the
+    /// direction is decided by the gesture's first movement and kept through its momentum.
+    private var scrollGestureIsVertical: Bool?
+
+    private enum ScrollRoute { case strip, enclosing, both }
+
+    private func scrollRoute(for event: NSEvent) -> ScrollRoute {
+        guard isPortrait, let scrollView = enclosingScrollView else { return .strip }
+        if let document = scrollView.documentView,
+           document.frame.height <= scrollView.contentView.bounds.height + 1 {
+            return .strip  // Nothing to scroll
+        }
+        let dx = abs(event.scrollingDeltaX)
+        let dy = abs(event.scrollingDeltaY)
+        if event.phase.isEmpty && event.momentumPhase.isEmpty {
+            // A mouse wheel: no gesture phases
+            return dy > dx ? .enclosing : .strip
+        }
+        if event.phase == .began || event.phase == .mayBegin {
+            scrollGestureIsVertical = nil
+        }
+        if scrollGestureIsVertical == nil, dx != dy {
+            scrollGestureIsVertical = dy > dx
+        }
+        defer {
+            if event.momentumPhase == .ended || event.momentumPhase == .cancelled || event.phase == .cancelled {
+                scrollGestureIsVertical = nil
+            }
+        }
+        switch scrollGestureIsVertical {
+        case .some(true): return .enclosing
+        case .some(false): return .strip
+        case .none: return .both
         }
     }
 
@@ -3053,6 +3167,8 @@ class CoverFlowNSView: NSView, OpenWithActionTarget {
                 if !typeAheadBuffer.isEmpty {
                     jumpToMatch()
                 }
+            } else if !hasShift && !modifiers.contains(.option) && !modifiers.contains(.control) {
+                _ = SwipeNavigator.goBackFromKeyboard(in: window, viewModel: focusViewModel)
             }
         case 53: // Escape - clear type-ahead buffer
             typeAheadBuffer = ""
@@ -3135,9 +3251,9 @@ class CoverFlowNSView: NSView, OpenWithActionTarget {
 
     override func accessibilityRole() -> NSAccessibility.Role? { .list }
 
-    override func accessibilityRoleDescription() -> String? { "cover flow" }
+    override func accessibilityRoleDescription() -> String? { String(localized: "cover flow") }
 
-    override func accessibilityLabel() -> String? { "Cover Flow" }
+    override func accessibilityLabel() -> String? { String(localized: "Cover Flow") }
 
     override func accessibilityValue() -> Any? {
         guard selectedIndex >= 0 && selectedIndex < items.count else { return nil }
@@ -3668,8 +3784,19 @@ enum CoverFlowGeometry {
     static let centreZOffset: CGFloat = 50
     static let spacingRatio: CGFloat = 0.22      // Space between side covers
     static let sideOffsetRatio: CGFloat = 0.62   // Distance from center to first side cover
+    // Tall side panel: a large centre cover with the neighbours peeking in at the edges
+    static let portraitSpacingRatio: CGFloat = 0.10
+    static let portraitSideOffsetRatio: CGFloat = 0.60
+    static let portraitSideScale: CGFloat = sideScale * 0.78
 
-    static func baseCoverSize(viewSize: CGSize, coverScale: CGFloat) -> CGFloat {
+    static func spacing(baseCoverSize: CGFloat, portrait: Bool) -> CGFloat {
+        baseCoverSize * (portrait ? portraitSpacingRatio : spacingRatio)
+    }
+
+    static func baseCoverSize(viewSize: CGSize, coverScale: CGFloat, portrait: Bool = false) -> CGFloat {
+        if portrait {
+            return min(viewSize.width * 0.62 * coverScale, viewSize.height * 0.6)
+        }
         let heightDriven = viewSize.height * 0.7
         let widthDriven = viewSize.width * 0.28
         return min(heightDriven, widthDriven, 480) * coverScale
@@ -3682,11 +3809,11 @@ enum CoverFlowGeometry {
     }
 
     /// Where the cover `offset` places from the centre goes. Negative offsets are on the left.
-    static func placement(offsetFromCentre diff: Int, viewSize: CGSize, baseCoverSize: CGFloat) -> Placement {
+    static func placement(offsetFromCentre diff: Int, viewSize: CGSize, baseCoverSize: CGFloat, portrait: Bool = false) -> Placement {
         let centreX = viewSize.width / 2
         let centreY = viewSize.height / 2
-        let spacing = baseCoverSize * spacingRatio
-        let sideOffset = baseCoverSize * sideOffsetRatio
+        let spacing = spacing(baseCoverSize: baseCoverSize, portrait: portrait)
+        let sideOffset = baseCoverSize * (portrait ? portraitSideOffsetRatio : sideOffsetRatio)
 
         let xPosition: CGFloat
         let angle: CGFloat
@@ -3703,7 +3830,7 @@ enum CoverFlowGeometry {
             angle = -sideAngle
         }
 
-        let scale: CGFloat = diff == 0 ? 1.0 : sideScale
+        let scale: CGFloat = diff == 0 ? 1.0 : (portrait ? portraitSideScale : sideScale)
         var transform = CATransform3DIdentity
         transform.m34 = perspective
         transform = CATransform3DTranslate(transform, 0, 0, diff == 0 ? centreZOffset : 0)

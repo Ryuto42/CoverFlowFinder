@@ -350,7 +350,7 @@ struct MasonryView: View {
                 }
             }
         }
-        .background(Color(nsColor: .controlBackgroundColor))
+        .uiBackground(.content)
         .featheredTopBlur(height: 50)
         .onDrop(of: DropHelper.acceptedDropTypes, delegate: ContainerDropDelegate(
             viewModel: viewModel,
@@ -1101,7 +1101,7 @@ struct PhotosMasonryView: View {
             showFilenames: settings.masonryShowFilenames,
             thumbnailQuality: Double(settings.thumbnailQualityValue)
         )
-        .background(Color(nsColor: .controlBackgroundColor))
+        .uiBackground(.content)
         .simultaneousGesture(magnificationGesture)
     }
 
@@ -1700,7 +1700,7 @@ private struct PhotosMasonryRepresentable: NSViewRepresentable {
 
         nonisolated func filePromiseProvider(_ filePromiseProvider: NSFilePromiseProvider, fileNameForType fileType: String) -> String {
             guard let info = filePromiseProvider.userInfo as? PromiseInfo else {
-                return "Photo"
+                return String(localized: "Photo")
             }
             return info.filename
         }

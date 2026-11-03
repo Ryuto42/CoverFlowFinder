@@ -14,11 +14,15 @@ protocol FileNameCellViewDelegate: AnyObject {
 }
 
 final class FileNameCellView: NSTableCellView, NSTextFieldDelegate {
+    static let iconLeadingInset: CGFloat = 12
     private let iconView = NSImageView()
     private let nameTextField = EditableTextField()
     private let tagDotsStack = NSStackView()
+    private let gitBadge = GitStatusBadgeNSView()
     private var iconWidthConstraint: NSLayoutConstraint?
     private var iconHeightConstraint: NSLayoutConstraint?
+
+    var displayedIcon: NSImage? { iconView.image }
 
     weak var delegate: FileNameCellViewDelegate?
     private var currentItem: FileItem?
@@ -75,6 +79,7 @@ final class FileNameCellView: NSTableCellView, NSTextFieldDelegate {
         tagDotsStack.spacing = 2
         tagDotsStack.alignment = .centerY
         addSubview(tagDotsStack)
+        gitBadge.onChange = { [weak self] in self?.updateHiddenItemDimming() }
 
         let iconWidth = iconView.widthAnchor.constraint(equalToConstant: 16)
         let iconHeight = iconView.heightAnchor.constraint(equalToConstant: 16)
@@ -82,7 +87,7 @@ final class FileNameCellView: NSTableCellView, NSTextFieldDelegate {
         iconHeightConstraint = iconHeight
 
         NSLayoutConstraint.activate([
-            iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.iconLeadingInset),
             iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
             iconWidth,
             iconHeight,
@@ -121,6 +126,7 @@ final class FileNameCellView: NSTableCellView, NSTextFieldDelegate {
         updateHiddenItemDimming()
 
         setTags(tags ?? [], showTags: appSettings.showItemTags)
+        gitBadge.show(url: item.url, isDirectory: item.isDirectory)
     }
 
     /// The table dims cut items' whole cells (0.5): a hidden item's icon and name are then not
@@ -140,7 +146,7 @@ final class FileNameCellView: NSTableCellView, NSTextFieldDelegate {
         let isCut = alphaValue < 1
         let isSelected = backgroundStyle == .emphasized || isEditing
         let iconAlpha = CGFloat(currentItem?.iconOpacity(isCut: isCut) ?? 1)
-        let nameAlpha = CGFloat(currentItem?.nameOpacity(isCut: isCut, isSelected: isSelected) ?? 1)
+        let nameAlpha = CGFloat(currentItem?.nameOpacity(isCut: isCut, isSelected: isSelected) ?? 1) * (gitBadge.isIgnored && !isSelected ? 0.5 : 1)
         if iconView.alphaValue != iconAlpha {
             iconView.alphaValue = iconAlpha
         }
@@ -176,6 +182,7 @@ final class FileNameCellView: NSTableCellView, NSTextFieldDelegate {
             }
         }
 
+        tagDotsStack.addArrangedSubview(gitBadge)
         tagDotsStack.isHidden = tagDotsStack.arrangedSubviews.isEmpty
     }
 
@@ -407,6 +414,7 @@ final class DateCellView: NSTableCellView {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
+        formatter.doesRelativeDateFormatting = true
         return formatter
     }()
 
@@ -439,7 +447,7 @@ final class DateCellView: NSTableCellView {
         } else {
             dateLabel.stringValue = "--"
         }
-        dateLabel.font = NSFont.systemFont(ofSize: max(9, appSettings.listFontSize - 2))
+        dateLabel.font = NSFont.monospacedDigitSystemFont(ofSize: max(9, appSettings.listFontSize - 2), weight: .regular)
         dateLabel.textColor = .secondaryLabelColor
     }
 }
@@ -475,7 +483,7 @@ final class SizeCellView: NSTableCellView {
 
     func configure(item: FileItem, appSettings: AppSettings) {
         sizeLabel.stringValue = item.formattedSize
-        sizeLabel.font = NSFont.systemFont(ofSize: max(9, appSettings.listFontSize - 2))
+        sizeLabel.font = NSFont.monospacedDigitSystemFont(ofSize: max(9, appSettings.listFontSize - 2), weight: .regular)
         sizeLabel.textColor = .secondaryLabelColor
     }
 }

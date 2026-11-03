@@ -1283,3 +1283,15 @@ static BOOL SZLooksLikeSFXStub(NSString *path)
 }
 
 @end
+
+// macOS file names are NFD; ZIP entry names are stored as NFC so Windows does not split dakuten.
+void SZNormalizeNFC(UString &s)
+{
+  if (s.IsAscii())
+    return;
+  @autoreleasepool {
+    NSString *nfc = SZStringFromUString(s).precomposedStringWithCanonicalMapping;
+    if (nfc)
+      s = SZUStringFromNSString(nfc);
+  }
+}

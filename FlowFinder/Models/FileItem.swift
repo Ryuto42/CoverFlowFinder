@@ -399,6 +399,7 @@ struct FileItem: Identifiable, Hashable {
 
     // Lazy icon lookup - only loads when accessed
     var icon: NSImage {
+        if let colorful = ColorfulFileIcon.image(for: self) { return colorful }
         if isFromArchive {
             // For archive items, use generic icons based on file type
             return IconCache.shared.genericIcon(for: fileType)
@@ -417,6 +418,7 @@ struct FileItem: Identifiable, Hashable {
     /// Fast placeholder icon - returns instantly without filesystem access
     /// Use this for initial display while the real icon loads asynchronously
     var placeholderIcon: NSImage {
+        if let colorful = ColorfulFileIcon.image(for: self) { return colorful }
         if isNetworkService {
             return Self.networkServiceIcon
         }
@@ -473,7 +475,8 @@ struct FileItem: Identifiable, Hashable {
         // Listings prefetch these keys (see `FileItem.listingResourceKeys`), so reading them here
         // doesn't touch the disk again
         var requestedKeys: Set<URLResourceKey> = [
-            .isDirectoryKey, .contentTypeKey, .isPackageKey, .isSymbolicLinkKey, .isAliasFileKey, .isHiddenKey
+            .isDirectoryKey, .contentTypeKey, .isPackageKey, .isSymbolicLinkKey, .isAliasFileKey, .isHiddenKey,
+            .localizedTypeDescriptionKey
         ]
         if loadMetadata {
             requestedKeys.formUnion([.fileSizeKey, .contentModificationDateKey, .creationDateKey])
@@ -545,7 +548,8 @@ struct FileItem: Identifiable, Hashable {
             isDirectory: isDirectory,
             isPackage: isPackage,
             isLink: isSymbolicLink || self.isAliasFile,
-            fileType: fileType
+            fileType: fileType,
+            localizedKind: isSymbolicLink ? nil : resourceValues?.localizedTypeDescription
         )
 
         // Cloud status is loaded on demand, not during init
@@ -652,22 +656,23 @@ struct FileItem: Identifiable, Hashable {
         return .other
     }
 
-    private static func kindDescription(contentType: UTType?, isDirectory: Bool, isPackage: Bool, isLink: Bool, fileType: FileType) -> String {
-        if isLink { return "Alias" }
-        if isDirectory && !isPackage { return "Folder" }
+    private static func kindDescription(contentType: UTType?, isDirectory: Bool, isPackage: Bool, isLink: Bool, fileType: FileType, localizedKind: String? = nil) -> String {
+        if isLink { return String(localized: "Alias") }
+        if isDirectory && !isPackage { return String(localized: "Folder") }
+        if let localizedKind, !localizedKind.isEmpty { return localizedKind }
         if let contentType, let description = KindDescriptionCache.description(for: contentType) {
             return description
         }
         switch fileType {
-        case .folder: return "Folder"
-        case .image: return "Image"
-        case .video: return "Video"
-        case .audio: return "Audio"
-        case .document: return "Document"
-        case .code: return "Source Code"
-        case .archive: return "Archive"
-        case .application: return "Application"
-        case .other: return isPackage ? "Package" : "Document"
+        case .folder: return String(localized: "Folder")
+        case .image: return String(localized: "Image")
+        case .video: return String(localized: "Video")
+        case .audio: return String(localized: "Audio")
+        case .document: return String(localized: "Document")
+        case .code: return String(localized: "Source Code")
+        case .archive: return String(localized: "Archive")
+        case .application: return String(localized: "Application")
+        case .other: return isPackage ? String(localized: "Package") : String(localized: "Document")
         }
     }
 
@@ -682,6 +687,7 @@ struct FileItem: Identifiable, Hashable {
         formatter.locale = .autoupdatingCurrent
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
+        formatter.doesRelativeDateFormatting = true
         return formatter
     }()
 
@@ -737,7 +743,8 @@ extension FileItem {
     /// The name as Finder shows it: a ":" in the on-disk name is displayed as "/".
     /// Use this for display; `name` stays the real file-system name for path operations.
     var displayName: String {
-        Self.displayForm(of: name)
+        if let localized = localizedFolderName { return localized }
+        return Self.displayForm(of: name)
     }
 
     func displayName(showFileExtensions: Bool) -> String {
@@ -758,7 +765,8 @@ extension FileItem {
     /// Resource keys every folder listing prefetches, so creating items reads nothing more from
     /// the disk for them (`init(url:loadMetadata: false)` reads exactly these).
     static let listingResourceKeys: [URLResourceKey] = [
-        .isDirectoryKey, .contentTypeKey, .isPackageKey, .isSymbolicLinkKey, .isAliasFileKey, .isHiddenKey
+        .isDirectoryKey, .contentTypeKey, .isPackageKey, .isSymbolicLinkKey, .isAliasFileKey, .isHiddenKey,
+        .localizedNameKey, .localizedTypeDescriptionKey
     ]
 
     /// Names never listed, even while hidden files are shown (like Finder: .DS_Store only stores

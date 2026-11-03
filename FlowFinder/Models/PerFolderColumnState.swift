@@ -9,7 +9,7 @@ import Foundation
 class PerFolderColumnStateManager {
     static let shared = PerFolderColumnStateManager()
 
-    private let maxCacheSize = 100  // LRU limit
+    private let maxCacheSize = 2000  // LRU limit
     private let persistenceKey = "PerFolderColumnStates"
     private let defaults: UserDefaults
     /// Entries not saved or used for this long are dropped

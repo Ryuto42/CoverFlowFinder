@@ -248,7 +248,7 @@ struct IconGridView: View {
                 }
             }
         }
-        .background(Color(nsColor: .controlBackgroundColor))
+        .uiBackground(.content)
         .featheredTopBlur(height: 50)
         .onDrop(of: DropHelper.acceptedDropTypes, delegate: ContainerDropDelegate(
             viewModel: viewModel,
@@ -278,6 +278,8 @@ struct IconGridView: View {
             Button("Show in Finder") {
                 viewModel.showInFinder()
             }
+
+            CustomBackgroundMenu(viewModel: viewModel)
         }
         .onChange(of: items) { _, newItems in
             // Keeps thumbnails of items that remain, drops removed ones and reloads around
@@ -472,15 +474,20 @@ struct IconGridItem: View {
                         .offset(x: 4, y: 4)
                 }
             }
+            .overlay(alignment: .topTrailing) {
+                GitStatusBadge(url: item.url, isDirectory: item.isDirectory, onIcon: true).offset(x: 4, y: -4)
+            }
             .contentShape(Rectangle())
             .onTapGesture {
                 handleTap(onTextArea: false)
             }
+            .onMiddleClick { _ = viewModel.openFolderInNewTab(item) }
 
             // Text/label area - clicks here can trigger rename
             VStack(spacing: 2) {
                 InlineRenameField(item: item, viewModel: viewModel, font: appSettings.iconGridFont, alignment: .center, lineLimit: 2)
                     .opacity(item.nameOpacity(isCut: isCut, isSelected: isSelected))
+                    .gitIgnoredDimming(url: item.url, isDirectory: item.isDirectory)
                     .frame(width: labelWidth)
                     .padding(.horizontal, 4)
                     .padding(.vertical, 2)

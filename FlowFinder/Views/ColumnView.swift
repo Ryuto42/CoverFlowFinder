@@ -62,7 +62,7 @@ struct ColumnView: View {
                 }
             }
         }
-        .background(Color(nsColor: .controlBackgroundColor))
+        .uiBackground(.content)
         .keyboardNavigable(
             onUpArrow: { shift in navigateInActiveColumn(by: -1, extend: shift) },
             onDownArrow: { shift in navigateInActiveColumn(by: 1, extend: shift) },
@@ -1472,7 +1472,10 @@ struct SingleColumnView: View {
                     columnURL: columnURL,
                     viewModel: viewModel,
                     dropTargetedItemID: $dropTargetedItemID,
-                    isColumnDropTargeted: $isColumnDropTargeted
+                    isColumnDropTargeted: $isColumnDropTargeted,
+                    springOpen: { item in
+                        if let index = items.firstIndex(of: item) { onClick(item, index, []) }
+                    }
                 ))
                 // Dragging a selected item drags the whole selection
                 .fileDragContainer(for: viewModel)
@@ -1515,6 +1518,8 @@ struct SingleColumnView: View {
                         viewModel.showInFinder()
                     }
                 }
+
+                CustomBackgroundMenu(viewModel: viewModel, folder: columnURL)
             }
             .onAppear {
                 startTagRead()
@@ -1585,10 +1590,13 @@ struct ColumnRowView: View {
             }
 
             InlineRenameField(item: item, viewModel: viewModel, font: appSettings.columnFont, alignment: .leading, lineLimit: 1)
+                .gitIgnoredDimming(url: item.url, isDirectory: item.isDirectory)
 
             if appSettings.showItemTags, !tags.isEmpty {
                 TagDotsView(tags: tags)
             }
+
+            GitStatusBadge(url: item.url, isDirectory: item.isDirectory)
 
             Spacer()
 
@@ -1763,7 +1771,7 @@ struct PreviewColumn: View {
 }
 
 struct InfoRow: View {
-    let label: String
+    let label: LocalizedStringKey
     let value: String
 
     var body: some View {
@@ -1772,6 +1780,7 @@ struct InfoRow: View {
                 .foregroundColor(.secondary)
                 .frame(width: 60, alignment: .trailing)
             Text(value)
+                .monospacedDigit()
                 .lineLimit(1)
         }
     }
@@ -2110,6 +2119,7 @@ struct ColumnRowsDropDelegate: DropDelegate {
     let viewModel: FileBrowserViewModel
     @Binding var dropTargetedItemID: UUID?
     @Binding var isColumnDropTargeted: Bool
+    var springOpen: ((FileItem) -> Void)? = nil
 
     private var columnDelegate: ColumnBackgroundDropDelegate {
         ColumnBackgroundDropDelegate(
@@ -2123,7 +2133,7 @@ struct ColumnRowsDropDelegate: DropDelegate {
     /// The delegate of the folder row under the pointer, when that folder takes this drop.
     private func folderDelegate(at location: CGPoint, info: DropInfo) -> UnifiedFolderDropDelegate? {
         guard let index = ColumnRowMetrics.rowIndex(atY: location.y, rowHeight: rowHeight, count: items.count) else { return nil }
-        let delegate = UnifiedFolderDropDelegate(item: items[index], viewModel: viewModel, dropTargetedItemID: $dropTargetedItemID)
+        let delegate = UnifiedFolderDropDelegate(item: items[index], viewModel: viewModel, dropTargetedItemID: $dropTargetedItemID, springOpen: springOpen)
         return delegate.validateDrop(info: info) ? delegate : nil
     }
 

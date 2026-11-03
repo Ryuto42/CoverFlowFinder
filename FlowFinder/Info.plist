@@ -46,5 +46,49 @@
         <string>_afp._tcp</string>
         <string>_workstation._tcp</string>
     </array>
+    <key>FFSourceRoot</key>
+    <string>$(SRCROOT)</string>
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.data</string>
+            </array>
+            <key>UTTypeDescription</key>
+            <string>Flow Finder Tab</string>
+            <key>UTTypeIdentifier</key>
+            <string>com.ryuto.flowfinder.tab</string>
+        </dict>
+    </array>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Folder</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>public.folder</string>
+                <string>public.volume</string>
+            </array>
+        </dict>
+    </array>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>com.ryuto.FlowFinder.open</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>flowfinder</string>
+            </array>
+        </dict>
+    </array>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Opens Finder’s Get Info window when the default application can’t be changed directly.</string>
 </dict>
 </plist>

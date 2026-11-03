@@ -103,6 +103,7 @@ class InternalDragState: ObservableObject {
     /// targets validate against them); the published flag updates on the next runloop turn, since
     /// drag callbacks can run inside a SwiftUI update.
     func beginDrag(urls: [URL]) {
+        MainActor.assumeIsolated { DragAsideController.shared.dragDidBegin() }
         draggedURLs = urls
         dragStartedAt = Date()
         buttonReleasedAt = nil
@@ -114,6 +115,7 @@ class InternalDragState: ObservableObject {
 
     /// Ends the current internal drag (drop performed, drag cancelled, or mouse released).
     func endDrag() {
+        MainActor.assumeIsolated { DragAsideController.shared.dragDidEnd() }
         if isDragging {
             isDragging = false
         } else {

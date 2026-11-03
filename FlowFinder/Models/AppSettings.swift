@@ -13,6 +13,7 @@ final class AppSettings: ObservableObject {
         static let showStatusBar = "settings.showStatusBar"
         static let soundEffectsEnabled = "settings.soundEffectsEnabled"
         static let showItemTags = "settings.showItemTags"
+        static let useColorfulFileIcons = "settings.useColorfulFileIcons"
         static let sidebarShowFavorites = "settings.sidebarShowFavorites"
         static let sidebarShowICloud = "settings.sidebarShowICloud"
         static let sidebarShowLocations = "settings.sidebarShowLocations"
@@ -23,6 +24,7 @@ final class AppSettings: ObservableObject {
         /// Format of the stored favorites, written with them since 1.39. Its absence means 1.38 or earlier wrote them.
         static let sidebarFavoritesFormat = "settings.sidebarFavorites.format"
         static let sidebarCollapsedSections = "settings.sidebarCollapsedSections"
+        static let sidebarLayout = "settings.sidebarLayout"
         static let thumbnailQuality = "settings.thumbnailQuality"
         static let masonryShowFilenames = "settings.masonryShowFilenames"
 
@@ -43,12 +45,35 @@ final class AppSettings: ObservableObject {
         static let coverFlowScale = "settings.coverFlowScale"
         static let coverFlowSwipeSpeed = "settings.coverFlowSwipeSpeed"
         static let coverFlowShowInfo = "settings.coverFlowShowInfo"
+        static let coverFlowPanelInSplit = "settings.coverFlowPanelInSplit"
         static let coverFlowPaneHeight = "settings.coverFlowPaneHeight"
+        static let coverFlowLayout = "settings.coverFlowLayout"
+        static let coverFlowPanelWidth = "settings.coverFlowPanelWidth"
         static let usePerFolderColumnState = "settings.usePerFolderColumnState"
         static let calculateAllSizes = "settings.calculateAllSizes"
         static let inlineVideoPreview = "settings.inlineVideoPreview"
         static let inlineAudioPreview = "settings.inlineAudioPreview"
         static let videoSkimming = "settings.videoSkimming"
+        static let swipeToNavigate = "settings.swipeToNavigate"
+        static let backspaceGoesBack = "settings.backspaceGoesBack"
+        static let terminalAppBundleID = "settings.terminalAppBundleID"
+        static let newTabLocation = "settings.newTabLocation"
+        static let newTabCustomPath = "settings.newTabCustomPath"
+        static let showShareRibbon = "settings.showShareRibbon"
+        static let showDockProgress = "settings.showDockProgress"
+        static let showGitStatus = "settings.showGitStatus"
+        static let filterSearchesSubfolders = "settings.filterSearchesSubfolders"
+        static let offerInstallerCleanup = "settings.offerInstallerCleanup"
+        static let compressExcludeMacFiles = "settings.compressExcludeMacFiles"
+        static let compressionLevel = "settings.compressionLevel"
+        static let imageQuality = "settings.imageQuality"
+        static let restoreTabsOnLaunch = "settings.restoreTabsOnLaunch"
+        static let rememberViewOptionsPerFolder = "settings.rememberViewOptionsPerFolder"
+        static let translucentWindow = "settings.translucentWindow"
+        static let showDropStack = "settings.showDropStack"
+        static let dropStackKeepsItems = "settings.dropStackKeepsItems"
+        static let dragMovesWindowAside = "settings.dragMovesWindowAside"
+        static let compactViewModePicker = "settings.compactViewModePicker"
     }
 
     private enum Defaults {
@@ -59,6 +84,7 @@ final class AppSettings: ObservableObject {
         static let showStatusBar = true
         static let soundEffectsEnabled = true
         static let showItemTags = true
+        static let useColorfulFileIcons = true
         static let sidebarShowFavorites = true
         static let sidebarShowICloud = true
         static let sidebarShowLocations = true
@@ -92,12 +118,35 @@ final class AppSettings: ObservableObject {
         static let coverFlowScale: Double = 1.2
         static let coverFlowSwipeSpeed: Double = 1.0
         static let coverFlowShowInfo = true
+        static let coverFlowPanelInSplit = false
         static let coverFlowPaneHeight: Double = 0
+        static let coverFlowLayout = "right"
+        static let coverFlowPanelWidth: Double = 360
         static let usePerFolderColumnState = true  // Finder-like behavior (default)
-        static let calculateAllSizes = false
+        static let calculateAllSizes = true
         static let inlineVideoPreview = true
         static let inlineAudioPreview = true
         static let videoSkimming = true
+        static let swipeToNavigate = true
+        static let backspaceGoesBack = true
+        static let terminalAppBundleID = "com.apple.Terminal"
+        static let newTabLocation = "current"
+        static let newTabCustomPath = ""
+        static let showShareRibbon = true
+        static let showDockProgress = true
+        static let showGitStatus = true
+        static let filterSearchesSubfolders = true
+        static let offerInstallerCleanup = true
+        static let compressExcludeMacFiles = true
+        static let compressionLevel = "normal"
+        static let imageQuality = 0.85
+        static let restoreTabsOnLaunch = true
+        static let rememberViewOptionsPerFolder = true
+        static let translucentWindow = true
+        static let showDropStack = true
+        static let dropStackKeepsItems = false
+        static let dragMovesWindowAside = true
+        static let compactViewModePicker = false
     }
 
     private let defaults: UserDefaults
@@ -123,6 +172,12 @@ final class AppSettings: ObservableObject {
     @Published var showItemTags: Bool {
         didSet { defaults.set(showItemTags, forKey: Keys.showItemTags) }
     }
+    @Published var useColorfulFileIcons: Bool {
+        didSet {
+            defaults.set(useColorfulFileIcons, forKey: Keys.useColorfulFileIcons)
+            ColorfulFileIcon.isEnabled = useColorfulFileIcons
+        }
+    }
     @Published var sidebarShowFavorites: Bool {
         didSet { defaults.set(sidebarShowFavorites, forKey: Keys.sidebarShowFavorites) }
     }
@@ -146,6 +201,10 @@ final class AppSettings: ObservableObject {
     /// it, when it rebuilds its rows.
     var sidebarCollapsedSections: Set<String> {
         didSet { defaults.set(sidebarCollapsedSections.sorted(), forKey: Keys.sidebarCollapsedSections) }
+    }
+    /// Section order, groups, Kinds and per-item customization (JSON), applied on top of the settings above.
+    @Published var sidebarLayout: SidebarLayout {
+        didSet { defaults.set(sidebarLayout.encoded(), forKey: Keys.sidebarLayout) }
     }
     @Published var thumbnailQuality: Double {
         didSet { defaults.set(thumbnailQuality, forKey: Keys.thumbnailQuality) }
@@ -199,8 +258,19 @@ final class AppSettings: ObservableObject {
     @Published var coverFlowShowInfo: Bool {
         didSet { defaults.set(coverFlowShowInfo, forKey: Keys.coverFlowShowInfo) }
     }
+
+    @Published var coverFlowPanelInSplit: Bool {
+        didSet { defaults.set(coverFlowPanelInSplit, forKey: Keys.coverFlowPanelInSplit) }
+    }
     @Published var coverFlowPaneHeight: Double {
         didSet { defaults.set(coverFlowPaneHeight, forKey: Keys.coverFlowPaneHeight) }
+    }
+    /// "right": covers in a tall panel beside the list; "top": covers above the list
+    @Published var coverFlowLayout: String {
+        didSet { defaults.set(coverFlowLayout, forKey: Keys.coverFlowLayout) }
+    }
+    @Published var coverFlowPanelWidth: Double {
+        didSet { defaults.set(coverFlowPanelWidth, forKey: Keys.coverFlowPanelWidth) }
     }
     @Published var usePerFolderColumnState: Bool {
         didSet { defaults.set(usePerFolderColumnState, forKey: Keys.usePerFolderColumnState) }
@@ -225,6 +295,68 @@ final class AppSettings: ObservableObject {
     @Published var videoSkimming: Bool {
         didSet { defaults.set(videoSkimming, forKey: Keys.videoSkimming) }
     }
+    @Published var swipeToNavigate: Bool {
+        didSet { defaults.set(swipeToNavigate, forKey: Keys.swipeToNavigate) }
+    }
+    @Published var backspaceGoesBack: Bool {
+        didSet { defaults.set(backspaceGoesBack, forKey: Keys.backspaceGoesBack) }
+    }
+    @Published var terminalAppBundleID: String {
+        didSet { defaults.set(terminalAppBundleID, forKey: Keys.terminalAppBundleID) }
+    }
+    @Published var newTabLocation: String {
+        didSet { defaults.set(newTabLocation, forKey: Keys.newTabLocation) }
+    }
+    @Published var newTabCustomPath: String {
+        didSet { defaults.set(newTabCustomPath, forKey: Keys.newTabCustomPath) }
+    }
+    @Published var showShareRibbon: Bool {
+        didSet { defaults.set(showShareRibbon, forKey: Keys.showShareRibbon) }
+    }
+    @Published var showDockProgress: Bool {
+        didSet { defaults.set(showDockProgress, forKey: Keys.showDockProgress) }
+    }
+    @Published var showGitStatus: Bool {
+        didSet { defaults.set(showGitStatus, forKey: Keys.showGitStatus) }
+    }
+    @Published var filterSearchesSubfolders: Bool {
+        didSet { defaults.set(filterSearchesSubfolders, forKey: Keys.filterSearchesSubfolders) }
+    }
+    @Published var offerInstallerCleanup: Bool {
+        didSet { defaults.set(offerInstallerCleanup, forKey: Keys.offerInstallerCleanup) }
+    }
+
+    @Published var compressExcludeMacFiles: Bool {
+        didSet { defaults.set(compressExcludeMacFiles, forKey: Keys.compressExcludeMacFiles) }
+    }
+    @Published var compressionLevel: String {
+        didSet { defaults.set(compressionLevel, forKey: Keys.compressionLevel) }
+    }
+    @Published var imageQuality: Double {
+        didSet { defaults.set(imageQuality, forKey: Keys.imageQuality) }
+    }
+    @Published var restoreTabsOnLaunch: Bool {
+        didSet { defaults.set(restoreTabsOnLaunch, forKey: Keys.restoreTabsOnLaunch) }
+    }
+    /// Folders set to "Always open in … view" keep their view mode and icon sizes.
+    @Published var rememberViewOptionsPerFolder: Bool {
+        didSet { defaults.set(rememberViewOptionsPerFolder, forKey: Keys.rememberViewOptionsPerFolder) }
+    }
+    @Published var translucentWindow: Bool {
+        didSet { defaults.set(translucentWindow, forKey: Keys.translucentWindow) }
+    }
+    @Published var showDropStack: Bool {
+        didSet { defaults.set(showDropStack, forKey: Keys.showDropStack) }
+    }
+    @Published var dropStackKeepsItems: Bool {
+        didSet { defaults.set(dropStackKeepsItems, forKey: Keys.dropStackKeepsItems) }
+    }
+    @Published var dragMovesWindowAside: Bool {
+        didSet { defaults.set(dragMovesWindowAside, forKey: Keys.dragMovesWindowAside) }
+    }
+    @Published var compactViewModePicker: Bool {
+        didSet { defaults.set(compactViewModePicker, forKey: Keys.compactViewModePicker) }
+    }
 
     private convenience init() {
         self.init(defaults: .standard)
@@ -242,6 +374,7 @@ final class AppSettings: ObservableObject {
             Keys.showStatusBar: Defaults.showStatusBar,
             Keys.soundEffectsEnabled: Defaults.soundEffectsEnabled,
             Keys.showItemTags: Defaults.showItemTags,
+            Keys.useColorfulFileIcons: Defaults.useColorfulFileIcons,
             Keys.sidebarShowFavorites: Defaults.sidebarShowFavorites,
             Keys.sidebarShowICloud: Defaults.sidebarShowICloud,
             Keys.sidebarShowLocations: Defaults.sidebarShowLocations,
@@ -262,12 +395,35 @@ final class AppSettings: ObservableObject {
             Keys.coverFlowScale: Defaults.coverFlowScale,
             Keys.coverFlowSwipeSpeed: Defaults.coverFlowSwipeSpeed,
             Keys.coverFlowShowInfo: Defaults.coverFlowShowInfo,
+            Keys.coverFlowPanelInSplit: Defaults.coverFlowPanelInSplit,
             Keys.coverFlowPaneHeight: Defaults.coverFlowPaneHeight,
+            Keys.coverFlowLayout: Defaults.coverFlowLayout,
+            Keys.coverFlowPanelWidth: Defaults.coverFlowPanelWidth,
             Keys.usePerFolderColumnState: Defaults.usePerFolderColumnState,
             Keys.calculateAllSizes: Defaults.calculateAllSizes,
             Keys.inlineVideoPreview: Defaults.inlineVideoPreview,
             Keys.inlineAudioPreview: Defaults.inlineAudioPreview,
-            Keys.videoSkimming: Defaults.videoSkimming
+            Keys.videoSkimming: Defaults.videoSkimming,
+            Keys.swipeToNavigate: Defaults.swipeToNavigate,
+            Keys.backspaceGoesBack: Defaults.backspaceGoesBack,
+            Keys.terminalAppBundleID: Defaults.terminalAppBundleID,
+            Keys.newTabLocation: Defaults.newTabLocation,
+            Keys.newTabCustomPath: Defaults.newTabCustomPath,
+            Keys.showShareRibbon: Defaults.showShareRibbon,
+            Keys.showDockProgress: Defaults.showDockProgress,
+            Keys.showGitStatus: Defaults.showGitStatus,
+            Keys.filterSearchesSubfolders: Defaults.filterSearchesSubfolders,
+            Keys.offerInstallerCleanup: Defaults.offerInstallerCleanup,
+            Keys.compressExcludeMacFiles: Defaults.compressExcludeMacFiles,
+            Keys.compressionLevel: Defaults.compressionLevel,
+            Keys.imageQuality: Defaults.imageQuality,
+            Keys.restoreTabsOnLaunch: Defaults.restoreTabsOnLaunch,
+            Keys.rememberViewOptionsPerFolder: Defaults.rememberViewOptionsPerFolder,
+            Keys.translucentWindow: Defaults.translucentWindow,
+            Keys.showDropStack: Defaults.showDropStack,
+            Keys.dropStackKeepsItems: Defaults.dropStackKeepsItems,
+            Keys.dragMovesWindowAside: Defaults.dragMovesWindowAside,
+            Keys.compactViewModePicker: Defaults.compactViewModePicker
         ])
 
         showHiddenFiles = defaults.bool(forKey: Keys.showHiddenFiles)
@@ -277,6 +433,8 @@ final class AppSettings: ObservableObject {
         showStatusBar = defaults.bool(forKey: Keys.showStatusBar)
         soundEffectsEnabled = defaults.bool(forKey: Keys.soundEffectsEnabled)
         showItemTags = defaults.bool(forKey: Keys.showItemTags)
+        useColorfulFileIcons = defaults.bool(forKey: Keys.useColorfulFileIcons)
+        ColorfulFileIcon.isEnabled = defaults.bool(forKey: Keys.useColorfulFileIcons)
         sidebarShowFavorites = defaults.bool(forKey: Keys.sidebarShowFavorites)
         sidebarShowICloud = defaults.bool(forKey: Keys.sidebarShowICloud)
         sidebarShowLocations = defaults.bool(forKey: Keys.sidebarShowLocations)
@@ -300,6 +458,7 @@ final class AppSettings: ObservableObject {
             unreadableFavoritesData = storedFavorites
         }
         sidebarCollapsedSections = Set(defaults.stringArray(forKey: Keys.sidebarCollapsedSections) ?? [])
+        sidebarLayout = SidebarLayout.decode(defaults.data(forKey: Keys.sidebarLayout))
         thumbnailQuality = defaults.double(forKey: Keys.thumbnailQuality)
         masonryShowFilenames = defaults.bool(forKey: Keys.masonryShowFilenames)
 
@@ -320,12 +479,35 @@ final class AppSettings: ObservableObject {
         coverFlowScale = defaults.double(forKey: Keys.coverFlowScale)
         coverFlowSwipeSpeed = defaults.double(forKey: Keys.coverFlowSwipeSpeed)
         coverFlowShowInfo = defaults.bool(forKey: Keys.coverFlowShowInfo)
+        coverFlowPanelInSplit = defaults.bool(forKey: Keys.coverFlowPanelInSplit)
         coverFlowPaneHeight = defaults.double(forKey: Keys.coverFlowPaneHeight)
+        coverFlowLayout = defaults.string(forKey: Keys.coverFlowLayout) ?? Defaults.coverFlowLayout
+        coverFlowPanelWidth = defaults.double(forKey: Keys.coverFlowPanelWidth)
         usePerFolderColumnState = defaults.bool(forKey: Keys.usePerFolderColumnState)
         calculateAllSizes = defaults.bool(forKey: Keys.calculateAllSizes)
         inlineVideoPreview = defaults.bool(forKey: Keys.inlineVideoPreview)
         inlineAudioPreview = defaults.bool(forKey: Keys.inlineAudioPreview)
         videoSkimming = defaults.bool(forKey: Keys.videoSkimming)
+        swipeToNavigate = defaults.bool(forKey: Keys.swipeToNavigate)
+        backspaceGoesBack = defaults.bool(forKey: Keys.backspaceGoesBack)
+        terminalAppBundleID = defaults.string(forKey: Keys.terminalAppBundleID) ?? Defaults.terminalAppBundleID
+        newTabLocation = defaults.string(forKey: Keys.newTabLocation) ?? Defaults.newTabLocation
+        newTabCustomPath = defaults.string(forKey: Keys.newTabCustomPath) ?? Defaults.newTabCustomPath
+        showShareRibbon = defaults.bool(forKey: Keys.showShareRibbon)
+        showDockProgress = defaults.bool(forKey: Keys.showDockProgress)
+        showGitStatus = defaults.bool(forKey: Keys.showGitStatus)
+        filterSearchesSubfolders = defaults.bool(forKey: Keys.filterSearchesSubfolders)
+        offerInstallerCleanup = defaults.bool(forKey: Keys.offerInstallerCleanup)
+        compressExcludeMacFiles = defaults.bool(forKey: Keys.compressExcludeMacFiles)
+        compressionLevel = defaults.string(forKey: Keys.compressionLevel) ?? Defaults.compressionLevel
+        imageQuality = defaults.double(forKey: Keys.imageQuality)
+        restoreTabsOnLaunch = defaults.bool(forKey: Keys.restoreTabsOnLaunch)
+        rememberViewOptionsPerFolder = defaults.bool(forKey: Keys.rememberViewOptionsPerFolder)
+        translucentWindow = defaults.bool(forKey: Keys.translucentWindow)
+        showDropStack = defaults.bool(forKey: Keys.showDropStack)
+        dropStackKeepsItems = defaults.bool(forKey: Keys.dropStackKeepsItems)
+        dragMovesWindowAside = defaults.bool(forKey: Keys.dragMovesWindowAside)
+        compactViewModePicker = defaults.bool(forKey: Keys.compactViewModePicker)
     }
 
     func resetToDefaults() {
@@ -336,6 +518,7 @@ final class AppSettings: ObservableObject {
         showStatusBar = Defaults.showStatusBar
         soundEffectsEnabled = Defaults.soundEffectsEnabled
         showItemTags = Defaults.showItemTags
+        useColorfulFileIcons = Defaults.useColorfulFileIcons
         sidebarShowFavorites = Defaults.sidebarShowFavorites
         sidebarShowICloud = Defaults.sidebarShowICloud
         sidebarShowLocations = Defaults.sidebarShowLocations
@@ -343,6 +526,7 @@ final class AppSettings: ObservableObject {
         preservedUnknownFavorites = []
         sidebarFavorites = Defaults.sidebarFavorites
         sidebarCollapsedSections = []
+        sidebarLayout = .default
         thumbnailQuality = Defaults.thumbnailQuality
         masonryShowFilenames = Defaults.masonryShowFilenames
 
@@ -363,12 +547,35 @@ final class AppSettings: ObservableObject {
         coverFlowScale = Defaults.coverFlowScale
         coverFlowSwipeSpeed = Defaults.coverFlowSwipeSpeed
         coverFlowShowInfo = Defaults.coverFlowShowInfo
+        coverFlowPanelInSplit = Defaults.coverFlowPanelInSplit
         coverFlowPaneHeight = Defaults.coverFlowPaneHeight
+        coverFlowLayout = Defaults.coverFlowLayout
+        coverFlowPanelWidth = Defaults.coverFlowPanelWidth
         usePerFolderColumnState = Defaults.usePerFolderColumnState
         calculateAllSizes = Defaults.calculateAllSizes
         inlineVideoPreview = Defaults.inlineVideoPreview
         inlineAudioPreview = Defaults.inlineAudioPreview
         videoSkimming = Defaults.videoSkimming
+        swipeToNavigate = Defaults.swipeToNavigate
+        backspaceGoesBack = Defaults.backspaceGoesBack
+        terminalAppBundleID = Defaults.terminalAppBundleID
+        newTabLocation = Defaults.newTabLocation
+        newTabCustomPath = Defaults.newTabCustomPath
+        showShareRibbon = Defaults.showShareRibbon
+        showDockProgress = Defaults.showDockProgress
+        showGitStatus = Defaults.showGitStatus
+        filterSearchesSubfolders = Defaults.filterSearchesSubfolders
+        offerInstallerCleanup = Defaults.offerInstallerCleanup
+        compressExcludeMacFiles = Defaults.compressExcludeMacFiles
+        compressionLevel = Defaults.compressionLevel
+        imageQuality = Defaults.imageQuality
+        restoreTabsOnLaunch = Defaults.restoreTabsOnLaunch
+        rememberViewOptionsPerFolder = Defaults.rememberViewOptionsPerFolder
+        translucentWindow = Defaults.translucentWindow
+        showDropStack = Defaults.showDropStack
+        dropStackKeepsItems = Defaults.dropStackKeepsItems
+        dragMovesWindowAside = Defaults.dragMovesWindowAside
+        compactViewModePicker = Defaults.compactViewModePicker
     }
 
     var listFont: Font {
@@ -576,7 +783,7 @@ struct SidebarFavorite: Identifiable, Codable, Equatable, Sendable {
                 return SidebarFavoriteResolution(
                     favorite: self,
                     url: storedURL,
-                    name: storedURL.lastPathComponent,
+                    name: storedURL.finderDisplayName,
                     isAvailable: true,
                     updatedFavorite: refreshed.map { withLocation(path: storedURL.path, bookmark: $0) }
                 )
@@ -585,14 +792,14 @@ struct SidebarFavorite: Identifiable, Codable, Equatable, Sendable {
             return SidebarFavoriteResolution(
                 favorite: self,
                 url: resolvedURL,
-                name: resolvedURL.lastPathComponent,
+                name: resolvedURL.finderDisplayName,
                 isAvailable: true,
                 updatedFavorite: withLocation(path: resolvedURL.path, bookmark: Self.makeBookmark(for: resolvedURL) ?? bookmark)
             )
         }
 
         guard let storedURL else {
-            return SidebarFavoriteResolution(favorite: self, url: nil, name: "Missing Folder", isAvailable: false, updatedFavorite: nil)
+            return SidebarFavoriteResolution(favorite: self, url: nil, name: String(localized: "Missing Folder"), isAvailable: false, updatedFavorite: nil)
         }
 
         let isAvailable = fileManager.fileExists(atPath: storedURL.path)
@@ -602,7 +809,7 @@ struct SidebarFavorite: Identifiable, Codable, Equatable, Sendable {
         return SidebarFavoriteResolution(
             favorite: self,
             url: storedURL,
-            name: storedURL.lastPathComponent,
+            name: storedURL.finderDisplayName,
             isAvailable: isAvailable,
             updatedFavorite: newBookmark.map { withLocation(path: storedURL.path, bookmark: $0) }
         )
@@ -638,21 +845,24 @@ extension SidebarFavorite.Kind {
     /// Display name and folder of a built-in favorite; nil for `.custom`.
     var systemLocation: (name: String, url: URL?)? {
         let fm = FileManager.default
+        func location(_ name: String, _ url: URL?) -> (name: String, url: URL?) {
+            (url?.localizedFolderName ?? name, url)
+        }
         switch self {
         case .documents:
-            return ("Documents", fm.urls(for: .documentDirectory, in: .userDomainMask).first)
+            return location("Documents", fm.urls(for: .documentDirectory, in: .userDomainMask).first)
         case .applications:
-            return ("Applications", fm.urls(for: .applicationDirectory, in: .localDomainMask).first)
+            return location("Applications", fm.urls(for: .applicationDirectory, in: .localDomainMask).first)
         case .desktop:
-            return ("Desktop", fm.urls(for: .desktopDirectory, in: .userDomainMask).first)
+            return location("Desktop", fm.urls(for: .desktopDirectory, in: .userDomainMask).first)
         case .downloads:
-            return ("Downloads", fm.urls(for: .downloadsDirectory, in: .userDomainMask).first)
+            return location("Downloads", fm.urls(for: .downloadsDirectory, in: .userDomainMask).first)
         case .movies:
-            return ("Movies", fm.urls(for: .moviesDirectory, in: .userDomainMask).first)
+            return location("Movies", fm.urls(for: .moviesDirectory, in: .userDomainMask).first)
         case .music:
-            return ("Music", fm.urls(for: .musicDirectory, in: .userDomainMask).first)
+            return location("Music", fm.urls(for: .musicDirectory, in: .userDomainMask).first)
         case .pictures:
-            return ("Pictures", fm.urls(for: .picturesDirectory, in: .userDomainMask).first)
+            return location("Pictures", fm.urls(for: .picturesDirectory, in: .userDomainMask).first)
         case .custom:
             return nil
         }

@@ -710,7 +710,10 @@ class ThumbnailCacheManager {
         } else {
             requestQuickLook(for: job, url: url, pixelSize: pixelSize, types: [.thumbnail, .icon]) { [weak self] cgImage, isIcon in
                 guard let self else { return }
-                if let cgImage, isIcon {
+                if cgImage != nil, isIcon, ColorfulFileIcon.isEnabled {
+                    // No real thumbnail: the caller falls back to the colored type icon
+                    self.finish(job, result: .failed, cgImage: nil, version: version, cacheResult: false)
+                } else if let cgImage, isIcon {
                     // Only the file's icon (no thumbnail yet, e.g. an iCloud file that isn't downloaded):
                     // shown, but not cached, so a later request can still get the real thumbnail
                     self.finish(job, result: .loaded(Self.makeImage(cgImage)), cgImage: nil, version: version, cacheResult: false)
@@ -1040,7 +1043,26 @@ class ThumbnailCacheManager {
     }
 
     private func directoryKey(path: String, maxPixelSize: CGFloat) -> String {
-        "dir_\(Int(clampPixelSize(maxPixelSize)))_\(path)"
+        let size = Int(clampPixelSize(maxPixelSize))
+        directorySizesLock.lock()
+        directorySizes.insert(size)
+        directorySizesLock.unlock()
+        return "dir_\(size)_\(path)"
+    }
+
+    private let directorySizesLock = NSLock()
+    private var directorySizes: Set<Int> = []
+
+    /// Forgets the cached folder thumbnails of `urls` (their icon changed).
+    func forgetFolderThumbnails(for urls: [URL]) {
+        directorySizesLock.lock()
+        let sizes = directorySizes
+        directorySizesLock.unlock()
+        for url in urls {
+            for size in sizes {
+                memoryCache.removeObject(forKey: "dir_\(size)_\(url.path)" as NSString)
+            }
+        }
     }
 
     /// Job key for a file whose version is read off the calling thread (never a cache key).

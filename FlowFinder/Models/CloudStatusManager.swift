@@ -68,10 +68,10 @@ final class CloudStatusManager: ObservableObject {
         // iCloud Drive (com~apple~CloudDocs) and app containers.
         var roots = [home + "/Library/Mobile Documents"]
 
-        // iCloud Drive exposed through a File Provider domain.
+        // File Provider domains: iCloud Drive, OneDrive and Google Drive.
         let cloudStoragePath = home + "/Library/CloudStorage"
         if let contents = try? fileManager.contentsOfDirectory(atPath: cloudStoragePath) {
-            roots += contents.filter { $0.contains("iCloud") }.map { cloudStoragePath + "/" + $0 }
+            roots += contents.filter(isCloudStorageDomain).map { cloudStoragePath + "/" + $0 }
         }
 
         // With "Desktop & Documents Folders" turned on, these sync to iCloud in place.
@@ -82,6 +82,10 @@ final class CloudStatusManager: ObservableObject {
             }
         }
         return roots
+    }
+
+    static func isCloudStorageDomain(_ name: String) -> Bool {
+        name.contains("iCloud") || name.hasPrefix("OneDrive-") || name.hasPrefix("GoogleDrive-")
     }
 
     /// Whether a URL is inside an iCloud location. A cheap path check (no I/O); `getStatus` then confirms
@@ -158,7 +162,8 @@ final class CloudStatusManager: ObservableObject {
         init() {}
 
         init(_ values: URLResourceValues) {
-            isUbiquitous = values.isUbiquitousItem ?? false
+            // File Provider items normally report isUbiquitousItem; the downloading status is the fallback.
+            isUbiquitous = values.isUbiquitousItem == true || values.ubiquitousItemDownloadingStatus != nil
             hasUnresolvedConflicts = values.ubiquitousItemHasUnresolvedConflicts ?? false
             isUploading = values.ubiquitousItemIsUploading ?? false
             isUploaded = values.ubiquitousItemIsUploaded

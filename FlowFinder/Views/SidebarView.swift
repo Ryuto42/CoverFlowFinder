@@ -57,11 +57,16 @@ struct SidebarOutlineView: NSViewRepresentable {
         outlineView.onReturn = { [weak coordinator = context.coordinator] in
             coordinator?.activateSelectedRow()
         }
+        outlineView.onMiddleClick = { [weak coordinator = context.coordinator] row in
+            coordinator?.openRowInNewTab(row)
+        }
         outlineView.headerView = nil
         outlineView.style = .sourceList
         outlineView.floatsGroupRows = true
-        outlineView.rowHeight = 24
+        outlineView.rowSizeStyle = .custom
+        outlineView.rowHeight = SidebarRowMetrics.rowHeight
         outlineView.intercellSpacing = NSSize(width: 0, height: 2)
+        outlineView.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
         outlineView.backgroundColor = .clear
         outlineView.allowsMultipleSelection = false
 
@@ -77,14 +82,14 @@ struct SidebarOutlineView: NSViewRepresentable {
         outlineView.target = context.coordinator
         outlineView.action = #selector(Coordinator.outlineViewClicked(_:))
 
-        var draggedTypes: [NSPasteboard.PasteboardType] = [.fileURL, Self.favoriteDragType]
+        var draggedTypes: [NSPasteboard.PasteboardType] = [.fileURL, Self.favoriteDragType, Self.layoutDragType]
         draggedTypes.append(contentsOf: NSFilePromiseReceiver.readableDraggedTypes.map { NSPasteboard.PasteboardType($0) })
         outlineView.registerForDraggedTypes(draggedTypes)
         // Favorites are only reordered inside the sidebar; nothing is offered to other apps.
         outlineView.setDraggingSourceOperationMask(.move, forLocal: true)
         outlineView.setDraggingSourceOperationMask([], forLocal: false)
 
-        let menu = NSMenu(title: "Sidebar")
+        let menu = NSMenu(title: String(localized: "Sidebar"))
         menu.delegate = context.coordinator
         outlineView.menu = menu
 
@@ -115,9 +120,9 @@ struct SidebarOutlineView: NSViewRepresentable {
         private let store = SidebarEnvironmentStore.shared
         private var storeSubscription: AnyCancellable?
         private var requestedFavorites: [SidebarFavorite]?
-        private var sections: [SidebarSection] = []
+        var sections: [SidebarSection] = []
         private var snapshot: SidebarSnapshot?
-        private var environment: SidebarEnvironment
+        var environment: SidebarEnvironment
         private var isUpdatingSelection = false
         /// Set while the sections are expanded or collapsed in code, so only the user's changes are remembered.
         private var isRestoringExpansion = false
@@ -162,13 +167,14 @@ struct SidebarOutlineView: NSViewRepresentable {
                 showTags: appSettings.sidebarShowTags,
                 favorites: favorites,
                 filterTag: viewModel.filterTag,
-                environment: nextEnvironment
+                environment: nextEnvironment,
+                customization: layoutSnapshot()
             )
 
             if force || snapshot != nextSnapshot {
                 snapshot = nextSnapshot
                 environment = nextEnvironment
-                sections = buildSections()
+                sections = applySidebarLayout(to: buildSections())
                 // Reloading can change the selected row; that must not count as a user selection.
                 isUpdatingSelection = true
                 isRestoringExpansion = true
@@ -186,7 +192,7 @@ struct SidebarOutlineView: NSViewRepresentable {
             guard let outlineView else { return }
             let collapsed = appSettings.sidebarCollapsedSections
             for section in sections {
-                if collapsed.contains(section.kind.rawValue) {
+                if collapsed.contains(section.layoutID) {
                     outlineView.collapseItem(section)
                 } else {
                     outlineView.expandItem(section)
@@ -207,9 +213,9 @@ struct SidebarOutlineView: NSViewRepresentable {
                   let section = notification.userInfo?["NSObject"] as? SidebarSection else { return }
             var collapsed = appSettings.sidebarCollapsedSections
             if isCollapsed {
-                collapsed.insert(section.kind.rawValue)
+                collapsed.insert(section.layoutID)
             } else {
-                collapsed.remove(section.kind.rawValue)
+                collapsed.remove(section.layoutID)
             }
             appSettings.sidebarCollapsedSections = collapsed
         }
@@ -239,8 +245,8 @@ struct SidebarOutlineView: NSViewRepresentable {
         }
 
         func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> NSPasteboardWriting? {
-            guard let sidebarItem = item as? SidebarItem else { return nil }
-            guard case let .favorite(resolution) = sidebarItem.kind else { return nil }
+            guard let sidebarItem = item as? SidebarItem,
+                  case let .favorite(resolution) = sidebarItem.kind else { return layoutPasteboardWriter(for: item) }
 
             // Reorder data only: no file URL, so the drag can't move or copy the folder anywhere.
             let pbItem = NSPasteboardItem()
@@ -260,6 +266,7 @@ struct SidebarOutlineView: NSViewRepresentable {
                          validateDrop info: NSDraggingInfo,
                          proposedItem item: Any?,
                          proposedChildIndex index: Int) -> NSDragOperation {
+            if let operation = validateLayoutDrop(info) { return operation }
             guard let favoritesSection = favoritesSection() else { return [] }
 
             let isInternal = isInternalDrag(info)
@@ -302,6 +309,7 @@ struct SidebarOutlineView: NSViewRepresentable {
                          acceptDrop info: NSDraggingInfo,
                          item: Any?,
                          childIndex index: Int) -> Bool {
+            if let accepted = acceptLayoutDrop(info) { return accepted }
             guard let favoritesSection = favoritesSection() else { return false }
             // Resolve copy/move now, while the modifier keys still reflect the drop.
             let operation = FileDropOperation(modifierFlags: NSEvent.modifierFlags)
@@ -389,9 +397,27 @@ struct SidebarOutlineView: NSViewRepresentable {
                 ?? SidebarItemCellView()
             view.identifier = SidebarItemCellView.identifier
 
-            let presentation = presentation(for: sidebarItem)
+            let presentation = applyItemCustomization(to: presentation(for: sidebarItem), item: sidebarItem)
             view.configure(presentation: presentation)
+            if case .location(let location) = sidebarItem.kind, location.isEjectable {
+                view.configureEjectButton(isEjecting: ejectingVolumeURLs.contains(location.url)) { [weak self, weak outlineView] in
+                    self?.ejectFromButton(location, item: sidebarItem, outlineView: outlineView)
+                }
+            } else {
+                view.configureEjectButton()
+            }
             return view
+        }
+
+        private var ejectingVolumeURLs: Set<URL> = []
+
+        private func ejectFromButton(_ location: SidebarLocation, item: SidebarItem, outlineView: NSOutlineView?) {
+            guard ejectingVolumeURLs.insert(location.url).inserted else { return }
+            outlineView?.reloadItem(item)
+            SidebarVolumeEjector.eject(location, window: outlineView?.window) { [weak self, weak outlineView] in
+                self?.ejectingVolumeURLs.remove(location.url)
+                outlineView?.reloadItem(item)
+            }
         }
 
         func outlineView(_ outlineView: NSOutlineView, shouldSelectItem item: Any) -> Bool {
@@ -416,7 +442,7 @@ struct SidebarOutlineView: NSViewRepresentable {
             let row = outlineView.selectedRow
             guard row >= 0, let item = outlineView.item(atRow: row) as? SidebarItem else { return }
             switch item.kind {
-            case .airDrop, .photosLibrary:
+            case .airDrop, .photosLibrary, .kindFilter, .smartFolder:
                 // Arrowing past these must not open the AirDrop picker or switch to the Photos library (which can
                 // ask for permission): they act on a click or Return only.
                 return
@@ -439,6 +465,10 @@ struct SidebarOutlineView: NSViewRepresentable {
             let row = outlineView.clickedRow
             guard row >= 0, let item = outlineView.item(atRow: row) as? SidebarItem else { return }
             if item.isEnabled {
+                if NSEvent.modifierFlags.contains(.command), openInNewTab(item) {
+                    updateSelection()
+                    return
+                }
                 handleSelection(for: item)
             }
             // Re-highlight the row matching where we are (e.g. after AirDrop, or a click on a disabled row).
@@ -451,18 +481,19 @@ struct SidebarOutlineView: NSViewRepresentable {
             menu.removeAllItems()
             guard let outlineView = outlineView else { return }
             let row = outlineView.clickedRow
+            defer { appendLayoutMenuItems(to: menu, clickedRow: row) }
             guard row >= 0, let item = outlineView.item(atRow: row) as? SidebarItem else { return }
 
             switch item.kind {
             case .favorite(let resolution):
-                let removeItem = NSMenuItem(title: "Remove from Favorites", action: #selector(removeFavoriteFromMenu(_:)), keyEquivalent: "")
+                let removeItem = NSMenuItem(title: String(localized: "Remove from Favorites"), action: #selector(removeFavoriteFromMenu(_:)), keyEquivalent: "")
                 removeItem.representedObject = resolution.favorite.id
                 removeItem.target = self
                 menu.addItem(removeItem)
 
             case .location(let location):
                 if location.isEjectable {
-                    let ejectItem = NSMenuItem(title: "Eject “\(location.name.finderDisplayName)”", action: #selector(ejectVolumeFromMenu(_:)), keyEquivalent: "")
+                    let ejectItem = NSMenuItem(title: String(localized: "Eject “\(location.name.finderDisplayName)”"), action: #selector(ejectVolumeFromMenu(_:)), keyEquivalent: "")
                     ejectItem.representedObject = location.url
                     ejectItem.target = self
                     menu.addItem(ejectItem)
@@ -490,6 +521,30 @@ struct SidebarOutlineView: NSViewRepresentable {
 
         // MARK: - Selection
 
+        func openInNewTab(_ item: SidebarItem) -> Bool {
+            let url: URL?
+            switch item.kind {
+            case .favorite(let resolution), .groupFolder(let resolution, _):
+                url = resolution.isAvailable ? resolution.url : nil
+            case .iCloud(let folder, let isAvailable):
+                url = isAvailable ? folder : nil
+            case .cloud(let location):
+                url = location.url
+            case .location(let location):
+                url = location.url
+            default:
+                url = nil
+            }
+            guard let url else { return false }
+            FolderOpenRequest.post(.openFolderInNewTab, folder: url, from: viewModel)
+            return true
+        }
+
+        func openRowInNewTab(_ row: Int) {
+            guard let outlineView, row >= 0, let item = outlineView.item(atRow: row) as? SidebarItem, item.isEnabled else { return }
+            _ = openInNewTab(item)
+        }
+
         private func handleSelection(for item: SidebarItem) {
             switch item.kind {
             case .airDrop:
@@ -504,6 +559,8 @@ struct SidebarOutlineView: NSViewRepresentable {
             case .iCloud(let url, let isAvailable):
                 guard isAvailable, let url else { return }
                 viewModel.navigateTo(url)
+            case .cloud(let location):
+                viewModel.navigateTo(location.url)
             case .location(let location):
                 viewModel.navigateTo(location.url)
             case .tag(let tag):
@@ -514,6 +571,13 @@ struct SidebarOutlineView: NSViewRepresentable {
                 }
             case .clearTagFilter:
                 viewModel.filterTag = nil
+            case .groupFolder(let resolution, _):
+                guard resolution.isAvailable, let url = resolution.url else { return }
+                viewModel.navigateTo(url)
+            case .kindFilter(let filter):
+                toggleKindFilter(filter)
+            case .smartFolder(let folder):
+                openSmartFolder(folder)
             }
         }
 
@@ -537,6 +601,8 @@ struct SidebarOutlineView: NSViewRepresentable {
 
             if let filterTag = viewModel.filterTag {
                 itemToSelect = findTagItem(named: filterTag)
+            } else if let kindItem = activeKindFilterItem() {
+                itemToSelect = kindItem
             } else {
                 itemToSelect = bestMatchingLocationItem(for: viewModel.currentPath)
             }
@@ -576,7 +642,8 @@ struct SidebarOutlineView: NSViewRepresentable {
                 for item in section.items {
                     guard let itemURL = item.url else { continue }
                     let itemComponents = itemURL.standardizedFileURL.pathComponents
-                    guard targetComponents.starts(with: itemComponents) else { continue }
+                    // Only the folder itself is highlighted, not its subfolders.
+                    guard targetComponents == itemComponents else { continue }
                     if itemComponents.count > bestMatchDepth {
                         bestItem = item
                         bestMatchDepth = itemComponents.count
@@ -915,15 +982,15 @@ struct SidebarOutlineView: NSViewRepresentable {
             var sections: [SidebarSection] = []
 
             if appSettings.sidebarShowFavorites {
-                let section = SidebarSection(kind: .favorites, title: "Favorites")
+                let section = SidebarSection(kind: .favorites, title: String(localized: "Favorites"))
                 var items: [SidebarItem] = []
-                items.append(SidebarItem(kind: .airDrop, id: "airdrop", title: "AirDrop"))
+                items.append(SidebarItem(kind: .airDrop, id: "airdrop", title: String(localized: "AirDrop")))
 
                 let photosAvailable = environment.photosLibraryInfo != nil
                 items.append(SidebarItem(
                     kind: .photosLibrary(environment.photosLibraryInfo, photosAvailable),
                     id: "photosLibrary",
-                    title: "Photos Library",
+                    title: String(localized: "Photos Library"),
                     isEnabled: photosAvailable
                 ))
 
@@ -944,20 +1011,22 @@ struct SidebarOutlineView: NSViewRepresentable {
             }
 
             if appSettings.sidebarShowICloud {
-                let section = SidebarSection(kind: .icloud, title: "iCloud")
+                let section = SidebarSection(kind: .icloud, title: String(localized: "Cloud"))
                 let isAvailable = environment.iCloudURL != nil
                 let item = SidebarItem(
                     kind: .iCloud(environment.iCloudURL, isAvailable),
                     id: "icloud",
-                    title: "iCloud Drive",
+                    title: String(localized: "iCloud Drive"),
                     isEnabled: isAvailable
                 )
-                section.items = [item]
+                section.items = [item] + environment.cloudLocations.map {
+                    SidebarItem(kind: .cloud($0), id: $0.itemID, title: $0.name)
+                }
                 sections.append(section)
             }
 
             if appSettings.sidebarShowLocations {
-                let section = SidebarSection(kind: .locations, title: "Locations")
+                let section = SidebarSection(kind: .locations, title: String(localized: "Locations"))
                 section.items = environment.locations.map { location in
                     SidebarItem(
                         kind: .location(location),
@@ -969,12 +1038,12 @@ struct SidebarOutlineView: NSViewRepresentable {
             }
 
             if appSettings.sidebarShowTags {
-                let section = SidebarSection(kind: .tags, title: "Tags")
+                let section = SidebarSection(kind: .tags, title: String(localized: "Tags"))
                 var items: [SidebarItem] = FinderTag.allTags.map { tag in
                     SidebarItem(kind: .tag(tag), id: "tag:\(tag.name)", title: tag.name)
                 }
                 if viewModel.filterTag != nil {
-                    items.append(SidebarItem(kind: .clearTagFilter, id: "tag:clear", title: "Clear Filter"))
+                    items.append(SidebarItem(kind: .clearTagFilter, id: "tag:clear", title: String(localized: "Clear Filter")))
                 }
                 section.items = items
                 sections.append(section)
@@ -992,58 +1061,48 @@ struct SidebarOutlineView: NSViewRepresentable {
             case .airDrop:
                 return SidebarItemPresentation(
                     title: item.title,
-                    icon: symbolIcon(name: "antenna.radiowaves.left.and.right"),
-                    iconTint: .controlAccentColor,
+                    icon: SidebarSymbols.image(SidebarSymbols.airDrop),
+                    iconTint: SidebarSymbols.placeTint,
                     accessory: nil,
                     isEnabled: true
                 )
             case .favorite(let resolution):
-                let icon = resolution.url.flatMap { environment.icons.icon(forPath: $0.path) } ?? symbolIcon(name: "folder")
                 return SidebarItemPresentation(
                     title: resolution.name.finderDisplayName,
-                    icon: icon,
-                    iconTint: nil,
+                    icon: SidebarSymbols.image(SidebarSymbols.favorite(resolution.favorite.kind, url: resolution.url)),
+                    iconTint: SidebarSymbols.favoriteTint,
                     accessory: nil,
                     isEnabled: resolution.isAvailable
                 )
             case .photosLibrary:
                 return SidebarItemPresentation(
                     title: item.title,
-                    icon: photosLibraryIcon(),
-                    iconTint: .controlAccentColor,
+                    icon: SidebarSymbols.image(SidebarSymbols.photosLibrary),
+                    iconTint: SidebarSymbols.favoriteTint,
                     accessory: nil,
                     isEnabled: item.isEnabled
                 )
             case .iCloud:
                 return SidebarItemPresentation(
                     title: item.title,
-                    icon: symbolIcon(name: "icloud"),
-                    iconTint: nil,
+                    icon: SidebarSymbols.image("icloud"),
+                    iconTint: SidebarSymbols.placeTint,
+                    accessory: nil,
+                    isEnabled: item.isEnabled
+                )
+            case .cloud:
+                return SidebarItemPresentation(
+                    title: item.title,
+                    icon: SidebarSymbols.image("cloud"),
+                    iconTint: SidebarSymbols.placeTint,
                     accessory: nil,
                     isEnabled: item.isEnabled
                 )
             case .location(let location):
-                if location.url.path == "/Network" {
-                    let icon = symbolIcon(name: "globe")
-                        ?? symbolIcon(name: "network")
-                        ?? NSImage(named: NSImage.networkName)
-                    return SidebarItemPresentation(
-                        title: location.name,
-                        icon: icon,
-                        iconTint: .labelColor,
-                        accessory: nil,
-                        isEnabled: true
-                    )
-                }
-                // Network volumes have no icon loaded (reading one could hang on an unresponsive server).
-                let fallbackSymbol = location.url.path == "/"
-                    ? "desktopcomputer"
-                    : location.isNetwork ? "externaldrive.connected.to.line.below" : "externaldrive"
-                let icon = environment.icons.icon(forPath: location.url.path) ?? symbolIcon(name: fallbackSymbol)
                 return SidebarItemPresentation(
-                    title: location.name.finderDisplayName,
-                    icon: icon,
-                    iconTint: nil,
+                    title: location.url.path == "/Network" ? location.name : location.name.finderDisplayName,
+                    icon: SidebarSymbols.image(SidebarSymbols.location(location)),
+                    iconTint: SidebarSymbols.placeTint,
                     accessory: nil,
                     isEnabled: true
                 )
@@ -1066,6 +1125,8 @@ struct SidebarOutlineView: NSViewRepresentable {
                     accessory: nil,
                     isEnabled: true
                 )
+            case .groupFolder, .kindFilter, .smartFolder:
+                return layoutItemPresentation(for: item)
             }
         }
 
@@ -1075,16 +1136,12 @@ struct SidebarOutlineView: NSViewRepresentable {
             return image
         }
 
-        private func photosLibraryIcon() -> NSImage? {
-            symbolIcon(name: "photo")
-        }
-
         private func triggerAirDropFromSelection() {
             let urls = airDropURLsFromSelection()
             guard !urls.isEmpty else {
                 showAirDropAlert(
-                    title: "AirDrop",
-                    message: "Select files in the main view or drop them onto AirDrop to send."
+                    title: String(localized: "AirDrop"),
+                    message: String(localized: "Select files in the main view or drop them onto AirDrop to send.")
                 )
                 return
             }
@@ -1112,8 +1169,8 @@ struct SidebarOutlineView: NSViewRepresentable {
             guard !validURLs.isEmpty else {
                 discardTemporaryFiles()
                 showAirDropAlert(
-                    title: "AirDrop",
-                    message: "The selected items are not available to share."
+                    title: String(localized: "AirDrop"),
+                    message: String(localized: "The selected items are not available to share.")
                 )
                 return
             }
@@ -1121,8 +1178,8 @@ struct SidebarOutlineView: NSViewRepresentable {
             guard let service = NSSharingService(named: .sendViaAirDrop) else {
                 discardTemporaryFiles()
                 showAirDropAlert(
-                    title: "AirDrop Unavailable",
-                    message: "AirDrop is not available on this Mac right now."
+                    title: String(localized: "AirDrop Unavailable"),
+                    message: String(localized: "AirDrop is not available on this Mac right now.")
                 )
                 return
             }
@@ -1130,8 +1187,8 @@ struct SidebarOutlineView: NSViewRepresentable {
             guard service.canPerform(withItems: validURLs) else {
                 discardTemporaryFiles()
                 showAirDropAlert(
-                    title: "AirDrop Unavailable",
-                    message: "AirDrop cannot share the selected items."
+                    title: String(localized: "AirDrop Unavailable"),
+                    message: String(localized: "AirDrop cannot share the selected items.")
                 )
                 return
             }
@@ -1166,6 +1223,7 @@ struct SidebarOutlineView: NSViewRepresentable {
 struct SidebarEnvironment: Equatable {
     var computerName: String
     var iCloudURL: URL?
+    var cloudLocations: [SidebarCloudLocation] = []
     var photosLibraryInfo: PhotosLibraryInfo?
     var locations: [SidebarLocation]
     /// Keyed by favorite id.
@@ -1186,6 +1244,7 @@ struct SidebarEnvironment: Equatable {
     static func == (lhs: SidebarEnvironment, rhs: SidebarEnvironment) -> Bool {
         lhs.computerName == rhs.computerName
             && lhs.iCloudURL == rhs.iCloudURL
+            && lhs.cloudLocations == rhs.cloudLocations
             && lhs.photosLibraryInfo == rhs.photosLibraryInfo
             && lhs.locations == rhs.locations
             && lhs.favoriteResolutions == rhs.favoriteResolutions
@@ -1202,9 +1261,11 @@ struct SidebarEnvironment: Equatable {
             icons[location.url.path] = NSWorkspace.shared.icon(forFile: location.url.path)
         }
 
+        let iCloudURL = iCloudDriveURL(fileManager: fileManager)
         return SidebarVolumeState(
             computerName: computerName,
-            iCloudURL: iCloudDriveURL(fileManager: fileManager),
+            iCloudURL: iCloudURL,
+            cloudLocations: SidebarCloudLocation.load(excluding: iCloudURL, fileManager: fileManager),
             photosLibraryInfo: photosLibraryInfo(fileManager: fileManager),
             locations: locations,
             icons: icons
@@ -1219,7 +1280,7 @@ struct SidebarEnvironment: Equatable {
            let path = favorite.path, !path.isEmpty,
            let mount = mounts.mount(containing: path), !mount.isLocal {
             let url = URL(fileURLWithPath: path, isDirectory: true)
-            let resolution = SidebarFavoriteResolution(favorite: favorite, url: url, name: url.lastPathComponent, isAvailable: true, updatedFavorite: nil)
+            let resolution = SidebarFavoriteResolution(favorite: favorite, url: url, name: url.finderDisplayName, isAvailable: true, updatedFavorite: nil)
             return (resolution, nil)
         }
 
@@ -1237,7 +1298,7 @@ struct SidebarEnvironment: Equatable {
         if let name = SCDynamicStoreCopyLocalHostName(nil) as String?, !name.isEmpty {
             return name
         }
-        return "Computer"
+        return String(localized: "Computer")
     }
 
     /// The computer, then the browsable mounted volumes by name, then Network. Local volumes are asked for their name
@@ -1353,6 +1414,7 @@ struct SidebarEnvironment: Equatable {
 struct SidebarVolumeState {
     let computerName: String
     let iCloudURL: URL?
+    let cloudLocations: [SidebarCloudLocation]
     let photosLibraryInfo: PhotosLibraryInfo?
     let locations: [SidebarLocation]
     /// Icons of the local volumes, by path.
@@ -1440,7 +1502,7 @@ struct SidebarLocation: Equatable {
     let isEjectable: Bool
     let isNetwork: Bool
 
-    static let network = SidebarLocation(name: "Network", url: URL(fileURLWithPath: "/Network", isDirectory: true), isEjectable: false, isNetwork: false)
+    static let network = SidebarLocation(name: String(localized: "Network"), url: URL(fileURLWithPath: "/Network", isDirectory: true), isEjectable: false, isNetwork: false)
 }
 
 extension SidebarFavoriteResolution {
@@ -1450,7 +1512,7 @@ extension SidebarFavoriteResolution {
             return SidebarFavoriteResolution(favorite: favorite, url: location.url, name: location.name, isAvailable: location.url != nil, updatedFavorite: nil)
         }
         guard let path = favorite.path, !path.isEmpty else {
-            return SidebarFavoriteResolution(favorite: favorite, url: nil, name: "Missing Folder", isAvailable: false, updatedFavorite: nil)
+            return SidebarFavoriteResolution(favorite: favorite, url: nil, name: String(localized: "Missing Folder"), isAvailable: false, updatedFavorite: nil)
         }
         // isDirectory avoids the file-system check URL(fileURLWithPath:) would otherwise make.
         let url = URL(fileURLWithPath: path, isDirectory: true)
@@ -1507,6 +1569,7 @@ final class SidebarEnvironmentStore {
 
     private init() {
         observeSystemChanges()
+        SidebarCloudStorageMonitor.shared.start()
     }
 
     func requestRefresh(favorites: [SidebarFavorite], settings: AppSettings) {
@@ -1554,6 +1617,7 @@ final class SidebarEnvironmentStore {
         var updated = environment
         updated.computerName = state.computerName
         updated.iCloudURL = state.iCloudURL
+        updated.cloudLocations = state.cloudLocations
         updated.photosLibraryInfo = state.photosLibraryInfo
         updated.locations = state.locations
         apply(updated)
@@ -1745,14 +1809,15 @@ final class SidebarEnvironmentStore {
 enum SidebarVolumeEjector {
     /// Like Finder: a volume that shares its disk with other mounted volumes asks whether to eject all of them or
     /// just this one; otherwise the whole disk is ejected. Network shares are unmounted.
-    static func eject(_ location: SidebarLocation, window: NSWindow?) {
+    /// `completion` runs once the eject has finished, failed or been cancelled.
+    static func eject(_ location: SidebarLocation, window: NSWindow?, completion: (() -> Void)? = nil) {
         guard !location.isNetwork else {
-            unmount(location, otherVolumes: [], ejectingDisk: false, window: window)
+            unmount(location, otherVolumes: [], ejectingDisk: false, window: window, completion: completion)
             return
         }
         let others = otherMountedVolumes(onDiskOf: location.url)
         guard !others.isEmpty else {
-            unmount(location, otherVolumes: [], ejectingDisk: true, window: window)
+            unmount(location, otherVolumes: [], ejectingDisk: true, window: window, completion: completion)
             return
         }
 
@@ -1760,20 +1825,20 @@ enum SidebarVolumeEjector {
         let otherNames = others.map { "“\(URL(fileURLWithPath: $0.path, isDirectory: true).finderDisplayName)”" }
         let alert = NSAlert()
         alert.alertStyle = .informational
-        alert.messageText = "“\(name)” is on a disk with other volumes."
-        alert.informativeText = "Do you want to eject all volumes on the disk (also \(ListFormatter.localizedString(byJoining: otherNames))), or just “\(name)”?"
-        alert.addButton(withTitle: "Eject All")
-        alert.addButton(withTitle: "Eject")
-        alert.addButton(withTitle: "Cancel")
+        alert.messageText = String(localized: "“\(name)” is on a disk with other volumes.")
+        alert.informativeText = String(localized: "Do you want to eject all volumes on the disk (also \(ListFormatter.localizedString(byJoining: otherNames))), or just “\(name)”?")
+        alert.addButton(withTitle: String(localized: "Eject All"))
+        alert.addButton(withTitle: String(localized: "Eject"))
+        alert.addButton(withTitle: String(localized: "Cancel"))
 
         let handle: (NSApplication.ModalResponse) -> Void = { response in
             switch response {
             case .alertFirstButtonReturn:
-                unmount(location, otherVolumes: others, ejectingDisk: true, window: window)
+                unmount(location, otherVolumes: others, ejectingDisk: true, window: window, completion: completion)
             case .alertSecondButtonReturn:
-                unmount(location, otherVolumes: [], ejectingDisk: false, window: window)
+                unmount(location, otherVolumes: [], ejectingDisk: false, window: window, completion: completion)
             default:
-                break
+                completion?()
             }
         }
         if let window {
@@ -1786,7 +1851,7 @@ enum SidebarVolumeEjector {
     }
 
     /// Unmounts `location`; with `ejectingDisk`, every volume on its disk and the disk itself.
-    private static func unmount(_ location: SidebarLocation, otherVolumes: [SidebarMountTable.Mount], ejectingDisk: Bool, window: NSWindow?) {
+    private static func unmount(_ location: SidebarLocation, otherVolumes: [SidebarMountTable.Mount], ejectingDisk: Bool, window: NSWindow?, completion: (() -> Void)? = nil) {
         let url = location.url
         let name = location.name
         // Let panes showing these volumes move away and stop watching them first, so we don't block our own eject.
@@ -1804,6 +1869,7 @@ enum SidebarVolumeEjector {
                 let failure = error.map { $0 as NSError }
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
+                        defer { completion?() }
                         if let failure {
                             // Panes that left these volumes for the eject come back (volumes that did go
                             // away were already reported by didUnmount).
@@ -1857,20 +1923,20 @@ enum SidebarVolumeEjector {
     static func presentEjectError(_ error: NSError, volumeName: String, window: NSWindow?) {
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "The volume “\(volumeName.finderDisplayName)” wasn’t ejected."
+        alert.messageText = String(localized: "The volume “\(volumeName.finderDisplayName)” wasn’t ejected.")
 
         if error.domain == NSCocoaErrorDomain, error.code == CocoaError.fileManagerUnmountBusy.rawValue {
-            var reason = "It’s in use"
+            var reason = String(localized: "It’s in use")
             if let pid = error.userInfo[NSFileManagerUnmountDissentingProcessIdentifierErrorKey] as? NSNumber,
                let app = NSRunningApplication(processIdentifier: pid.int32Value),
                let appName = app.localizedName {
                 reason += " by “\(appName)”"
             }
-            alert.informativeText = reason + ". Quit apps or close files that are using it, then try again."
+            alert.informativeText = reason + String(localized: ". Quit apps or close files that are using it, then try again.")
         } else {
             alert.informativeText = error.localizedDescription
         }
-        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: String(localized: "OK"))
 
         if let window {
             alert.beginSheetModal(for: window, completionHandler: nil)
@@ -1935,9 +2001,10 @@ private struct SidebarSnapshot: Equatable {
     let favorites: [SidebarFavorite]
     let filterTag: String?
     let environment: SidebarEnvironment
+    let customization: SidebarLayoutSnapshot
 }
 
-private struct SidebarItemPresentation {
+struct SidebarItemPresentation {
     let title: String
     let icon: NSImage?
     let iconTint: NSColor?
@@ -1948,6 +2015,12 @@ private struct SidebarItemPresentation {
 /// Return acts on the highlighted row (arrowing only moves the highlight for AirDrop and Photos).
 private final class SidebarNSOutlineView: NSOutlineView {
     var onReturn: (() -> Void)?
+    var onMiddleClick: ((Int) -> Void)?
+
+    override func otherMouseUp(with event: NSEvent) {
+        guard event.buttonNumber == 2, let onMiddleClick else { return super.otherMouseUp(with: event) }
+        onMiddleClick(row(at: convert(event.locationInWindow, from: nil)))
+    }
 
     override func keyDown(with event: NSEvent) {
         let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
@@ -1957,37 +2030,53 @@ private final class SidebarNSOutlineView: NSOutlineView {
         }
         super.keyDown(with: event)
     }
+
+    /// Keeps the one column as wide as the sidebar, so titles use all of it before truncating.
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        sizeLastColumnToFit()
+    }
 }
 
-private final class SidebarSection: NSObject {
-    /// Raw values are stored in `AppSettings.sidebarCollapsedSections`.
+final class SidebarSection: NSObject {
     enum Kind: String {
         case favorites
         case icloud
         case locations
         case tags
+        case kinds
+        case group
+        case smartFolders
     }
 
     let kind: Kind
-    let title: String
+    var title: String
     var items: [SidebarItem]
+    /// The `SidebarLayout` section id (the kind's raw value for built-in sections); stored in
+    /// `AppSettings.sidebarCollapsedSections`.
+    let layoutID: String
 
-    init(kind: Kind, title: String, items: [SidebarItem] = []) {
+    init(kind: Kind, title: String, items: [SidebarItem] = [], layoutID: String? = nil) {
         self.kind = kind
         self.title = title
         self.items = items
+        self.layoutID = layoutID ?? kind.rawValue
     }
 }
 
-private final class SidebarItem: NSObject {
+final class SidebarItem: NSObject {
     enum Kind {
         case airDrop
         case favorite(SidebarFavoriteResolution)
         case photosLibrary(PhotosLibraryInfo?, Bool)
         case iCloud(URL?, Bool)
+        case cloud(SidebarCloudLocation)
         case location(SidebarLocation)
         case tag(FinderTag)
         case clearTagFilter
+        case groupFolder(SidebarFavoriteResolution, sectionID: String)
+        case kindFilter(SidebarKindFilter)
+        case smartFolder(SmartFolder)
     }
 
     let kind: Kind
@@ -2010,8 +2099,12 @@ private final class SidebarItem: NSObject {
             return info?.libraryURL
         case .iCloud(let url, _):
             return url
+        case .cloud(let location):
+            return location.url
         case .location(let location):
             return location.url
+        case .groupFolder(let resolution, _):
+            return resolution.url
         default:
             return nil
         }
@@ -2024,6 +2117,13 @@ private final class SidebarItemCellView: NSTableCellView {
     private let iconView = NSImageView()
     private let titleField = NSTextField(labelWithString: "")
     private let accessoryView = NSImageView()
+    private var iconTint: NSColor?
+    private var titleToEdge: NSLayoutConstraint?
+    private var titleToAccessory: NSLayoutConstraint?
+    private var titleToEject: NSLayoutConstraint?
+    private let ejectButton = SidebarEjectButton()
+    private let ejectSpinner = NSProgressIndicator()
+    private var ejectAction: (() -> Void)?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -2035,15 +2135,48 @@ private final class SidebarItemCellView: NSTableCellView {
         setup()
     }
 
+    /// Shows the eject button (or a spinner while ejecting) at the trailing edge; nil hides it.
+    func configureEjectButton(isEjecting: Bool = false, action: (() -> Void)? = nil) {
+        ejectAction = action
+        let visible = action != nil
+        ejectButton.isHidden = !visible || isEjecting
+        ejectSpinner.isHidden = !visible || !isEjecting
+        if visible && isEjecting { ejectSpinner.startAnimation(nil) } else { ejectSpinner.stopAnimation(nil) }
+        updateTitleConstraints()
+    }
+
+    private func updateTitleConstraints() {
+        let hasEject = ejectAction != nil
+        let hasAccessory = !accessoryView.isHidden
+        titleToEdge?.isActive = !hasAccessory && !hasEject
+        titleToAccessory?.isActive = hasAccessory && !hasEject
+        titleToEject?.isActive = hasEject
+    }
+
+    @objc private func ejectClicked() {
+        ejectAction?()
+    }
+
     private func setup() {
+        ejectButton.translatesAutoresizingMaskIntoConstraints = false
+        ejectSpinner.translatesAutoresizingMaskIntoConstraints = false
+        ejectSpinner.style = .spinning
+        ejectSpinner.controlSize = .small
+        ejectSpinner.isIndeterminate = true
+        ejectSpinner.isDisplayedWhenStopped = false
+        ejectSpinner.isHidden = true
+        ejectButton.isHidden = true
+        ejectButton.target = self
+        ejectButton.action = #selector(ejectClicked)
+        ejectButton.toolTip = String(localized: "Eject")
+        addSubview(ejectButton)
+        addSubview(ejectSpinner)
         iconView.translatesAutoresizingMaskIntoConstraints = false
         titleField.translatesAutoresizingMaskIntoConstraints = false
         accessoryView.translatesAutoresizingMaskIntoConstraints = false
 
-        titleField.lineBreakMode = .byTruncatingMiddle
-        titleField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-        iconView.imageScaling = .scaleProportionallyDown
+        SidebarRowMetrics.configureTitle(titleField)
+        SidebarRowMetrics.configureIcon(iconView)
         accessoryView.imageScaling = .scaleProportionallyDown
         accessoryView.contentTintColor = .controlAccentColor
 
@@ -2054,34 +2187,102 @@ private final class SidebarItemCellView: NSTableCellView {
         addSubview(titleField)
         addSubview(accessoryView)
 
+        titleToEdge = titleField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4)
+        titleToAccessory = titleField.trailingAnchor.constraint(equalTo: accessoryView.leadingAnchor, constant: -6)
+        titleToEject = titleField.trailingAnchor.constraint(equalTo: ejectButton.leadingAnchor, constant: -4)
         NSLayoutConstraint.activate([
-            iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
-            iconView.widthAnchor.constraint(equalToConstant: 16),
-            iconView.heightAnchor.constraint(equalToConstant: 16),
+            ejectButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            ejectButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            ejectButton.widthAnchor.constraint(equalToConstant: 18),
+            ejectButton.heightAnchor.constraint(equalToConstant: 18),
+            ejectSpinner.centerXAnchor.constraint(equalTo: ejectButton.centerXAnchor),
+            ejectSpinner.centerYAnchor.constraint(equalTo: ejectButton.centerYAnchor),
+            ejectSpinner.widthAnchor.constraint(equalToConstant: 14),
+            ejectSpinner.heightAnchor.constraint(equalToConstant: 14),
 
-            titleField.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 8),
+            iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: SidebarRowMetrics.iconBox),
+            iconView.heightAnchor.constraint(equalToConstant: SidebarRowMetrics.iconBox),
+
+            titleField.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 6),
             titleField.centerYAnchor.constraint(equalTo: centerYAnchor),
 
-            accessoryView.leadingAnchor.constraint(greaterThanOrEqualTo: titleField.trailingAnchor, constant: 6),
             accessoryView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             accessoryView.centerYAnchor.constraint(equalTo: centerYAnchor),
             accessoryView.widthAnchor.constraint(equalToConstant: 12),
             accessoryView.heightAnchor.constraint(equalToConstant: 12)
         ])
+        titleToEdge?.isActive = true
     }
 
     func configure(presentation: SidebarItemPresentation) {
         titleField.stringValue = presentation.title
         titleField.textColor = presentation.isEnabled ? .labelColor : .secondaryLabelColor
+        titleField.toolTip = presentation.title
 
         iconView.image = presentation.icon
-        iconView.contentTintColor = presentation.iconTint
+        iconTint = presentation.iconTint
+        applyIconTint()
         iconView.alphaValue = presentation.isEnabled ? 1.0 : 0.5
 
         accessoryView.image = presentation.accessory
-        accessoryView.isHidden = presentation.accessory == nil
+        let hasAccessory = presentation.accessory != nil
+        accessoryView.isHidden = !hasAccessory
+        updateTitleConstraints()
     }
+
+    override var backgroundStyle: NSView.BackgroundStyle {
+        didSet {
+            applyIconTint()
+            ejectButton.isOnEmphasizedRow = backgroundStyle == .emphasized
+        }
+    }
+
+    /// On an emphasized (accent-coloured) selection the accent icon would vanish: draw it like the text.
+    private func applyIconTint() {
+        iconView.contentTintColor = backgroundStyle == .emphasized && iconTint != nil
+            ? .alternateSelectedControlTextColor
+            : iconTint
+    }
+}
+
+private final class SidebarEjectButton: NSButton {
+    var isOnEmphasizedRow = false { didSet { updateTint() } }
+    private var isHovered = false { didSet { updateTint() } }
+    private var tracking: NSTrackingArea?
+
+    init() {
+        super.init(frame: .zero)
+        isBordered = false
+        imagePosition = .imageOnly
+        imageScaling = .scaleProportionallyDown
+        image = NSImage(systemSymbolName: "eject.fill", accessibilityDescription: String(localized: "Eject"))?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold))
+        focusRingType = .none
+        updateTint()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    private func updateTint() {
+        if isOnEmphasizedRow {
+            contentTintColor = .alternateSelectedControlTextColor.withAlphaComponent(isHovered ? 1 : 0.75)
+        } else {
+            contentTintColor = isHovered ? .labelColor : .secondaryLabelColor
+        }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow], owner: self)
+        addTrackingArea(area)
+        tracking = area
+    }
+
+    override func mouseEntered(with event: NSEvent) { isHovered = true }
+    override func mouseExited(with event: NSEvent) { isHovered = false }
 }
 
 private final class SidebarGroupCellView: NSTableCellView {
@@ -2103,12 +2304,15 @@ private final class SidebarGroupCellView: NSTableCellView {
         titleField.translatesAutoresizingMaskIntoConstraints = false
         titleField.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
         titleField.textColor = .secondaryLabelColor
+        titleField.lineBreakMode = .byTruncatingTail
+        titleField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         textField = titleField
 
         addSubview(titleField)
         NSLayoutConstraint.activate([
             titleField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            titleField.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -4),
             titleField.centerYAnchor.constraint(equalTo: centerYAnchor)
         ])
     }

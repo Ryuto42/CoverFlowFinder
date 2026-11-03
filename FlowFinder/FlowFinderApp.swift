@@ -1,5 +1,4 @@
 import SwiftUI
-import Sparkle
 
 @main
 struct FlowFinderApp: App {
@@ -9,17 +8,12 @@ struct FlowFinderApp: App {
     @StateObject private var soundEffectsMonitor = FinderSoundEffectsMonitor()
     @NSApplicationDelegateAdaptor(FlowFinderAppDelegate.self) private var appDelegate
 
-    private let updaterController: SPUStandardUpdaterController
-
     init() {
-        updaterController = SPUStandardUpdaterController(
-            startingUpdater: true,
-            updaterDelegate: nil,
-            userDriverDelegate: nil
-        )
         // One tab system: the browser windows' own tabs, not AppKit's window tabs as well
         // (View ▸ Show Tab Bar, Window ▸ Merge All Windows).
         NSWindow.allowsAutomaticWindowTabbing = false
+        ThinScrollers.install()
+        CloudStatusLiveRefresh.shared.install()
     }
 
     var body: some Scene {
@@ -31,16 +25,18 @@ struct FlowFinderApp: App {
         .windowToolbarStyle(.unified(showsTitle: true))
         .commands {
             CommandGroup(after: .appInfo) {
-                CheckForUpdatesView(updater: updaterController.updater)
+                Button("Check for Updates...") { UpstreamUpdateChecker.checkForUpdates() }
             }
 
             SidebarCommands()
             ToolbarCommands()
 
             BrowserCommands(settings: settings, menuState: .shared)
+            CustomCommands(menuState: .shared)
+            DropStackCommands(settings: settings)
         }
         Settings {
-            SettingsView()
+            SettingsLayoutView()
                 .environmentObject(settings)
         }
     }
@@ -90,6 +86,12 @@ struct BrowserCommands: Commands {
             .keyboardShortcut("t", modifiers: .command)
             .disabled(menuState.isSheetActive)
 
+            Button("Reopen Closed Tab") {
+                BrowserWindowCommand.post(.reopenClosedTab)
+            }
+            .keyboardShortcut("t", modifiers: [.command, .shift])
+            .disabled(menuState.isSheetActive)
+
             // Disabled while a sheet is up so ⌘W reaches the sheet (Get Info's Close).
             Button(closesTab ? "Close Tab" : "Close Window") {
                 BrowserWindowCommand.closeTabOrWindow()
@@ -118,9 +120,7 @@ struct BrowserCommands: Commands {
                 ArchiveCompressionMenu(viewModel: viewModel)
                     .disabled(menuState.isSheetActive)
             } else {
-                ForEach(ArchiveCompressionFormat.allCases, id: \.self) { format in
-                    Button(format.title) {}.disabled(true)
-                }
+                Menu("Compress") {}.disabled(true)
             }
 
             Button("Get Info") {
@@ -128,6 +128,20 @@ struct BrowserCommands: Commands {
             }
             .keyboardShortcut("i", modifiers: .command)
             .disabled(!hasSelection)
+
+            Divider()
+
+            Button("Copy to Other Pane") {
+                BrowserWindowCommand.post(.copyToOtherPane)
+            }
+            .keyboardShortcut(KeyEquivalent(Character(UnicodeScalar(NSF5FunctionKey)!)), modifiers: [])
+            .disabled(!hasSelection || context?.isSplitTab != true)
+
+            Button("Move to Other Pane") {
+                BrowserWindowCommand.post(.moveToOtherPane)
+            }
+            .keyboardShortcut(KeyEquivalent(Character(UnicodeScalar(NSF6FunctionKey)!)), modifiers: [])
+            .disabled(!hasSelection || context?.isSplitTab != true)
 
             Divider()
         }
@@ -145,6 +159,17 @@ struct BrowserCommands: Commands {
             }
             .keyboardShortcut("[", modifiers: [.command, .shift])
             .disabled(menuState.isSheetActive)
+
+            Divider()
+
+            // ⌘1–⌘6 are the view modes (Finder's), so tabs are ⌥⌘1–⌥⌘9
+            ForEach(0..<9, id: \.self) { index in
+                Button(index == 8 ? "Show Last Tab" : "Show Tab \(index + 1)") {
+                    BrowserWindowCommand.post(.selectTabAtIndex, userInfo: [SplitTabCommand.tabIndexKey: index])
+                }
+                .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: [.command, .option])
+                .disabled(menuState.isSheetActive)
+            }
         }
 
         // Edit menu commands. While a text field is edited (or a non-browser window is key) they
@@ -220,7 +245,7 @@ struct BrowserCommands: Commands {
 
             // Finder's ⌘1–⌘4 (Icons, List, Columns, Gallery = Cover Flow), then the extra layouts
             ForEach(ViewModeShortcuts.menuOrder, id: \.self) { mode in
-                let button = Button("as \(mode.rawValue)") {
+                let button = Button("as \(mode.localizedName)") {
                     BrowserWindowCommand.post(.browserSetViewMode, userInfo: [BrowserWindowCommand.viewModeKey: mode.rawValue])
                 }
                 .disabled(menuState.isSheetActive)
@@ -233,8 +258,18 @@ struct BrowserCommands: Commands {
 
             Divider()
 
+            // ⇧⌘D here, so Go ▸ Desktop is ⌥⇧⌘D
+            Button(context?.isSplitTab == true ? "Unsplit Tab" : "Split Tab") {
+                BrowserWindowCommand.post(.toggleSplitTab)
+            }
+            .keyboardShortcut("d", modifiers: [.command, .shift])
+            .disabled(menuState.isSheetActive)
+
+            Divider()
+
             Toggle("Show Hidden Files", isOn: $settings.showHiddenFiles)
                 .keyboardShortcut(".", modifiers: [.command, .shift])
+            Toggle("Keep folders on top", isOn: $settings.foldersFirst)
 
             Divider()
 
@@ -289,7 +324,7 @@ struct BrowserCommands: Commands {
                     viewModel?.navigateTo(desktop)
                 }
             }
-            .keyboardShortcut("d", modifiers: [.command, .shift])
+            .keyboardShortcut("d", modifiers: [.command, .shift, .option])
             .disabled(viewModel == nil)
 
             Button("Documents") {
@@ -322,6 +357,14 @@ struct BrowserCommands: Commands {
             }
             .keyboardShortcut("g", modifiers: [.command, .shift])
             .disabled(menuState.isSheetActive)
+
+            Button("Edit Path") {
+                if let viewModel {
+                    NotificationCenter.default.post(name: .pathBarBeginEditing, object: viewModel)
+                }
+            }
+            .keyboardShortcut("l", modifiers: .command)
+            .disabled(viewModel == nil || !settings.showPathBar)
         }
     }
 
@@ -340,10 +383,16 @@ struct BrowserCommands: Commands {
 
 /// Asks before quitting while file operations run: quitting would cut a copy or move short.
 final class FlowFinderAppDelegate: NSObject, NSApplicationDelegate {
+    func application(_ application: NSApplication, open urls: [URL]) {
+        OpenFolderRequests.handle(urls)
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        QuitGuard.terminateReply(confirm: QuitGuard.confirmStoppingOperations) {
+        let reply = QuitGuard.terminateReply(confirm: QuitGuard.confirmStoppingOperations) {
             sender.reply(toApplicationShouldTerminate: true)
         }
+        if reply != .terminateCancel { InstallerCleanup.appWillQuit() }
+        return reply
     }
 }
 
@@ -378,10 +427,10 @@ enum QuitGuard {
     static func confirmStoppingOperations() -> Bool {
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "File operations are in progress."
-        alert.informativeText = "Stop them and quit? What’s done stays done; an item copied part-way is removed."
-        alert.addButton(withTitle: "Quit")
-        alert.addButton(withTitle: "Cancel")
+        alert.messageText = String(localized: "File operations are in progress.")
+        alert.informativeText = String(localized: "Stop them and quit? What’s done stays done; an item copied part-way is removed.")
+        alert.addButton(withTitle: String(localized: "Quit"))
+        alert.addButton(withTitle: String(localized: "Cancel"))
         return alert.runModal() == .alertFirstButtonReturn
     }
 }
