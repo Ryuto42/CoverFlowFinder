@@ -1,114 +1,59 @@
-# Flow Finder
+# Flow Finder（カスタム版）
 
-> **このリポジトリは非公式のフォークです。** 本家は [elliotttate/CoverFlowFinder](https://github.com/elliotttate/CoverFlowFinder)（MIT License）です。
-> 追加した機能は [CUSTOM_FEATURES.md](CUSTOM_FEATURES.md) を参照してください。下のダウンロードリンクや更新配信は本家のもので、このフォークの改造は含まれません。
->
-> *This is an unofficial fork of [elliotttate/CoverFlowFinder](https://github.com/elliotttate/CoverFlowFinder). The download links below point to the upstream builds, which don't include the changes in this fork.*
->
-> **ビルド方法**
-> 1. `Config/Local.xcconfig` のバンドル ID（`PRODUCT_BUNDLE_IDENTIFIER`）と `DEVELOPMENT_TEAM` を自分のものに書き換える。バンドル ID を変えたときは、`FlowFinderFinderSync/FinderSync.swift` の `appBundleID` と `scripts/install-local.sh` の ID も合わせる。
-> 2. `scripts/install-local.sh` で Release ビルドを作り、`/Applications` に入れる。
-> 3. 本家の更新は `scripts/update-from-upstream.command` で取り込む（本家を `upstream` リモートとして自動で登録する）。
+Cover Flow が使える macOS のファイルブラウザ [CoverFlowFinder](https://github.com/elliotttate/CoverFlowFinder) を、Finder や XtraFinder の代わりに毎日使えるように改造したフォークです。タブと分割、サイドバーの編集、一括リネーム、フォルダの比較などを追加しています。
 
-A beautiful macOS file browser that brings back the classic Cover Flow view from older versions of Finder.
+*An unofficial fork of [elliotttate/CoverFlowFinder](https://github.com/elliotttate/CoverFlowFinder) with Chrome-style tabs and split view, sidebar customization, batch rename, folder compare and more. The UI is localized in Japanese.*
 
-![Flow Finder Screenshot](screenshots/coverflow-apps.png)
+![メイン画面：リストの右に Cover Flow と情報欄](screenshots/main-window.png)
 
-## Features
+![分割タブ：左右のペインで表示形式を変えられる](screenshots/split-tabs.png)
 
-- **Cover Flow View** - Browse your files with the iconic 3D carousel effect, complete with smooth animations and reflections
-- **Multiple View Modes** - Switch between Cover Flow, Icons, List, Columns, and Dual Pane views
-- **Dual Pane Mode** - Two independent file browsers side by side for easy file management
-- **Quad Pane Mode** - Four independent panes for rapid comparison and organization
-- **Quick Look Integration** - Press Space to preview any file with Quick Look
-- **Full File Browser** - Navigate your entire file system with a familiar Finder-like interface
-- **Sidebar Navigation** - Quick access to Favorites, iCloud, and mounted volumes
-- **Sorting & Search** - Sort files by name, date, size, or kind; search to filter files instantly
-- **Archive Browsing** - Browse ZIP, RAR, 7z, TAR and other formats, including passwords, nested archives, multipart sets, Quick Look, thumbnails, single or batch extraction, and ZIP / 7z creation
-- **Clipboard Operations** - Copy, Cut, Paste, and Duplicate files with keyboard shortcuts
-- **Context Menus** - Right-click for quick access to file operations
-- **Type-Ahead Search** - Start typing to jump to matching files instantly
+## おもな機能
 
-## Requirements
+本家の機能（Cover Flow、アイコン・リスト・カラム表示、2 画面・4 画面、Quick Look、アーカイブの閲覧と作成など）に加えて、次の機能があります。すべての一覧は [CUSTOM_FEATURES.md](CUSTOM_FEATURES.md) にあります。
 
-- macOS 15.0 (Sequoia) or later
-- Apple Silicon or Intel Mac
+- **タブと分割**：Chrome のようなタブ。タブを画面の端へドラッグすると左右に分割でき、ペインごとに表示形式を変えられる。分割中は反対側へのコピー（F5）・移動（F6）ができる。
+- **状態の保存**：タブ・分割・戻る／進むの履歴を保存し、再起動後に復元する。
+- **Cover Flow パネル**：リストの右側に縦長の Cover Flow と情報欄（種類、サイズ、日付、解像度、開くアプリなど）を表示する。
+- **サイドバーの編集**：項目の並べ替え・別名・アイコン変更・非表示、自分で作るグループ、種類（画像・PDF など）での絞り込み。
+- **ファイル操作**：一括で名前を変更（正規表現・プレビュー付き）、フォルダの比較と同期、ドロップスタック、スマートフォルダ、フォルダの色とアイコン、圧縮・変換、テンプレートからの新規ファイル。
+- **標準のアプリの変更**：「情報を見る」や「このアプリケーションで開く」から、書類ごと、または同じ種類の書類すべての既定アプリを変えられる。
+- **Finder との連携**：Finder の右クリック「FlowFinder で開く」、フォルダを開く既定のアプリとしての利用。すでに開いているフォルダは、新しいタブを作らずにそのタブを前に出す。
+- **そのほか**：Git の状態表示、トラックパッドのスワイプで戻る・進む、パスの入力とコピー、ターミナルで開く、Dock アイコンへの進捗表示、日本語表示。
 
-## Installation
+## 動作環境
 
-### Download
-Download the latest DMG from the [Releases](https://github.com/elliotttate/CoverFlowFinder/releases) page.
+- macOS 15.0（Sequoia）以降
+- ビルドには Xcode 26 以降が必要
 
-### Build from Source
-1. Clone the repository:
+## ビルドとインストール
+
+配布用のビルドはありません。ソースからビルドしてください。
+
+1. リポジトリをクローンする。
    ```bash
-   git clone https://github.com/elliotttate/CoverFlowFinder.git
+   git clone https://github.com/Ryuto42/CoverFlowFinder.git
    ```
-2. Open `FlowFinder.xcodeproj` in Xcode 26 or later
-3. Build and run (⌘R)
+2. `Config/Local.xcconfig` の `PRODUCT_BUNDLE_IDENTIFIER` と `DEVELOPMENT_TEAM` を自分のものに書き換える。バンドル ID を変えたときは、`FlowFinderFinderSync/FinderSync.swift` の `appBundleID` と `scripts/install-local.sh` の ID も合わせる。
+3. Release ビルドを作り、`/Applications/FlowFinder.app` に入れる。
+   ```bash
+   scripts/install-local.sh
+   ```
 
-## Development
+Debug ビルドだけを作るときは `scripts/build-local.sh` を使います。
 
-See [DEVELOPMENT.md](DEVELOPMENT.md) for architecture details and how to add a new view mode.
+## 本家の更新の取り込み
 
-## Usage
+メニューの「アップデートを確認…」で本家の新しい版を確認できます。取り込みは次のスクリプトで行います。本家を `upstream` リモートとして登録し、取り込んだあとビルドとインストールまで行います。取り込んだ内容はコミットされないので、確認してから自分でコミットしてください。
 
-### Navigation
-- **Click** on a cover to select it
-- **Double-click** or press **Return** to open files/folders
-- **Arrow keys** to navigate between items
-- **Scroll wheel** for smooth momentum scrolling through covers
+```bash
+scripts/update-from-upstream.command
+```
 
-### Archives
-Double-click a supported archive to browse it. Double-click an archive inside it to continue into that archive; Up and Back return through the nested locations. For a file with an unfamiliar extension, choose **Open as Archive** from the File menu or context menu. Compressed TAR files can be entered through their inner TAR member.
+## 本家について
 
-Select files or folders and choose **Compress to ZIP** or **Compress to 7z** in the File menu or context menu. The archive is created in the current folder; a single selection uses its name and multiple selections create `Archive.zip` or `Archive.7z`. Existing archive names receive numbered suffixes. Compression preserves the originals and supports progress, cancellation, and Undo / Redo.
+アーキテクチャやビュー モードの追加方法は、本家のドキュメント [DEVELOPMENT.md](DEVELOPMENT.md) を参照してください。本家の配布版（[Releases](https://github.com/elliotttate/CoverFlowFinder/releases)）には、このフォークの改造は含まれません。
 
-Choose **Extract Archive** in the File menu or context menu to extract here, into a folder named after the archive, or into a folder you choose. With multiple archives selected, choose **Extract to Separate Folders** or **Extract All to One Folder…**. Existing items keep their contents; conflicting output names receive numbered suffixes. Extraction supports progress, cancellation, and Undo / Redo. Passwords are requested for interactive opening or extraction and kept only in the current engine session. Background thumbnails never ask for a password. For multipart archives, keep every volume together and open the first RAR/7z volume or the main `.zip` file.
+## ライセンス
 
-Quick Look and thumbnails prepare only the selected member. Copying a file or folder out uses private temporary storage, validates the data and paths, and retains download quarantine. Long operations have progress and cancellation. Browsing is read-only.
-
-### Keyboard Shortcuts
-| Shortcut | Action |
-|----------|--------|
-| Space | Quick Look preview |
-| Return | Open selected item |
-| ← → ↑ ↓ | Navigate items |
-| ⌘C | Copy |
-| ⌘X | Cut |
-| ⌘V | Paste |
-| ⌘D | Duplicate |
-| ⌘⌫ | Move to Trash |
-| ⌘[ | Go back |
-| ⌘] | Go forward |
-| ⌘⇧N | New Folder |
-| A-Z, 0-9 | Type-ahead search |
-
-### View Modes
-Use the toolbar buttons or View menu to switch between:
-- Cover Flow (default)
-- Icons
-- List
-- Columns
-- Dual Pane
-- Quad Pane
-
-## Technical Details
-
-### Architecture
-- Built with SwiftUI for the main interface
-- Native AppKit/Core Animation for the Cover Flow view (for optimal performance)
-- QuickLookThumbnailing framework for generating file previews
-
-### Performance Optimizations
-- Lazy thumbnail loading with prioritization based on proximity to selection
-- GPU-accelerated Core Animation transforms
-- Efficient layer management with recycling for smooth scrolling
-
-## License
-
-MIT License - see [LICENSE](LICENSE) for details.
-
-## Acknowledgments
-
-Inspired by the classic Cover Flow view from iTunes and older versions of macOS Finder.
+MIT License です。詳しくは [LICENSE](LICENSE) を参照してください。本家 CoverFlowFinder（Copyright (c) 2025 Brian Tate）をもとにしています。
